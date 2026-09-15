@@ -12,7 +12,7 @@ if on_vercel and (not origins or any(not origin.startswith("https://") or "*" in
 
 from app.database import Base, engine, ensure_schema_compatibility
 import app.models  # noqa: F401 - imports every model so Base knows about all tables
-from app.routers import auth, users, courses, attendance, assignments, quiz, materials, institutions, calendar, schedule, programming
+from app.routers import auth, users, courses, attendance, assignments, quiz, materials, institutions, calendar, schedule, programming, erp, ai, lectures
 from app.core.institution_domains import configured_login_origins
 
 # Existing databases require the reviewed migration before this release can start.
@@ -48,6 +48,9 @@ app.include_router(materials.router)
 app.include_router(calendar.router)
 app.include_router(schedule.router)
 app.include_router(programming.router)
+app.include_router(erp.router)
+app.include_router(ai.router)
+app.include_router(lectures.router)
 
 
 @app.get("/")

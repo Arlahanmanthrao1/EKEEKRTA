@@ -1,8 +1,9 @@
 import base64
 import binascii
 import re
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, HttpUrl, TypeAdapter, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, HttpUrl, TypeAdapter, ValidationError, field_validator, model_validator
 
 
 HTTPS_URL = TypeAdapter(HttpUrl)
@@ -17,6 +18,26 @@ class InstitutionOut(BaseModel):
     email_domain: str
     logo_url: str | None = None
     address: str | None = None
+    default_theme: Literal["light", "dark", "system"] = "light"
+    grading_scale_max: float = 10
+    passing_grade_point: float = 4
+
+
+class InstitutionThemeUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    default_theme: Literal["light", "dark", "system"]
+
+
+class InstitutionGradingUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    grading_scale_max: float = Field(ge=4, le=100)
+    passing_grade_point: float = Field(ge=0)
+
+    @model_validator(mode="after")
+    def passing_fits_scale(self):
+        if self.passing_grade_point > self.grading_scale_max:
+            raise ValueError("Passing grade point cannot exceed the grading-scale maximum")
+        return self
 
 
 class InstitutionProfile(BaseModel):

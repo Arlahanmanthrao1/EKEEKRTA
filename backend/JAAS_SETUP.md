@@ -62,6 +62,18 @@ Only the owning faculty or an admin gets moderator permissions. Recording,
 transcription, livestreaming and telephone features are disabled in the tokens.
 The browser sends the authenticated user's display name and ID to JaaS, along
 with the media required for the call; no email is included in our meeting token.
+The ID is the permanent EKEEKRTA database user ID, so creating a new class or a
+new join token does not create a new application identity for that student.
+
+JaaS MAU billing is different from this application identity. JaaS identifies a
+MAU using an identifier stored locally by JaaS on the meeting device/browser.
+Repeated classes in the same month on the same browser/device do not normally
+create another MAU while that storage remains available. A different device,
+browser profile or private session, clearing site data, or removing the JaaS app
+can produce another device identifier and therefore another MAU. EKEEKRTA cannot
+force JaaS to bill multiple devices as one MAU merely by reusing the JWT user ID.
+See https://developer.8x8.com/jaas/docs/faq/ and confirm actual usage in the JaaS
+Console Activity page.
 
 ## Limits and future college hosting
 

@@ -14,6 +14,8 @@ from app.models.institution import Institution, Department
 from app.routers import auth, institutions, users, courses, assignments, quiz, materials, attendance
 from app.config import settings
 from app.integrations.erp_client import sync_attendance_to_erp
+from app.core.secret_box import encrypt_secret
+from app.models.erp import ERPIntegration
 
 
 class InstitutionAccessTest(unittest.TestCase):
@@ -73,8 +75,21 @@ class InstitutionAccessTest(unittest.TestCase):
         self.assertEqual(self.request("GET","/users/",3).status_code,403)
         self.assertEqual(self.ids("/users/",10), {10,11,12,13})
 
+    def test_admin_can_delete_unused_accounts_without_erasing_history(self):
+        self.assertEqual(self.request("DELETE", "/users/9", 2).status_code, 403)
+        self.assertEqual(self.request("DELETE", "/users/12", 1).status_code, 404)
+        self.assertEqual(self.request("DELETE", "/users/1", 1).status_code, 409)
+        self.assertEqual(self.request("DELETE", "/users/3", 1).status_code, 409)
+        self.assertEqual(self.request("DELETE", "/users/9", 1).status_code, 204)
+        self.assertIsNone(self.db.get(User, 9))
+
+        # Removing an unused faculty account preserves the course and unassigns it.
+        self.assertEqual(self.request("DELETE", "/users/5", 1).status_code, 204)
+        self.assertIsNone(self.db.get(User, 5))
+        self.assertIsNone(self.db.get(Course, 2).faculty_id)
+
     def test_course_catalogs_are_scoped(self):
-        for user, expected in [(1,{1,2,3}),(2,{1}),(4,{1,2}),(7,set()),(3,{1,2,3}),(10,{4})]:
+        for user, expected in [(1,{1,2,3}),(2,{1}),(4,{1,2}),(7,set()),(3,{1,2}),(10,{4})]:
             self.assertEqual(self.ids("/courses/",user),expected)
         self.assertEqual(self.ids("/courses/enrolled",3),{1,2,3})
         self.assertEqual(self.ids("/courses/enrolled",9),set())
@@ -154,7 +169,7 @@ class InstitutionAccessTest(unittest.TestCase):
         self.assertEqual(self.request("POST","/assignments/submit",3,json={"assignment_id":1,"file_url":"https://example.com/test"}).status_code,201)
 
     def test_registration_and_department_validation(self):
-        payload={"name":"Test new HOD","email":"new@alpha.edu","password":"test-password-123","department":"CS"}
+        payload={"name":"Test new HOD","email":"new@alpha.edu","password":"test-password-123","department":"CS","institutional_id":"EMP-001"}
         response=self.request("POST","/auth/register-hod",1,json=payload)
         self.assertEqual(response.status_code,201,response.text)
         self.assertEqual(response.json()["role"],"hod")
@@ -163,7 +178,7 @@ class InstitutionAccessTest(unittest.TestCase):
             self.assertEqual(self.request("POST","/auth/register-hod",1,json={**payload,**invalid}).status_code,422)
         self.assertEqual(self.request("POST","/institutions/departments",1,json={"name":" cs "}).status_code,409)
         self.assertEqual(self.request("POST","/institutions/departments",1,json={"name":"Physics"}).status_code,201)
-        self.assertEqual(self.request("PATCH","/users/7",1,json={"name":"Test assigned HOD","department":"CS"}).status_code,200)
+        self.assertEqual(self.request("PATCH","/users/7",1,json={"name":"Test assigned HOD","department":"CS","institutional_id":"EMP-007"}).status_code,200)
         self.assertEqual(self.ids("/users/",7),{2,3,5,9})
 
     def test_institution_registration_atomicity_and_profile(self):
@@ -194,6 +209,35 @@ class InstitutionAccessTest(unittest.TestCase):
         invalid_logo={**update,"logo_url":"data:image/png;base64,bm90LWFuLWltYWdl"}
         self.assertEqual(self.request("PATCH","/institutions/current",ident,json=invalid_logo).status_code,422)
 
+    def test_only_admin_can_change_institution_default_theme(self):
+        response = self.request("PATCH", "/institutions/current/theme", 1, json={"default_theme": "dark"})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["default_theme"], "dark")
+        self.assertEqual(self.db.get(Institution, 1).default_theme, "dark")
+        self.assertEqual(self.db.get(Institution, 2).default_theme, "light")
+        for user in [2, 3, 4]:
+            self.assertEqual(self.request("PATCH", "/institutions/current/theme", user,
+                                          json={"default_theme": "system"}).status_code, 403)
+        self.assertEqual(self.request("PATCH", "/institutions/current/theme", 1,
+                                      json={"default_theme": "neon"}).status_code, 422)
+
+    def test_grading_rules_and_course_credits_follow_their_owners(self):
+        grading = self.request("PATCH", "/institutions/current/grading", 1,
+                               json={"grading_scale_max": 10, "passing_grade_point": 5})
+        self.assertEqual(grading.status_code, 200, grading.text)
+        self.assertEqual(grading.json()["passing_grade_point"], 5)
+        self.assertEqual(self.request("PATCH", "/institutions/current/grading", 2,
+                                      json={"grading_scale_max": 10, "passing_grade_point": 4}).status_code, 403)
+        self.assertEqual(self.request("PATCH", "/institutions/current/grading", 1,
+                                      json={"grading_scale_max": 10, "passing_grade_point": 11}).status_code, 422)
+
+        owned = self.request("PATCH", "/courses/1/credits", 2, json={"credits": 4})
+        self.assertEqual(owned.status_code, 200, owned.text)
+        self.assertEqual(owned.json()["credits"], 4)
+        self.assertEqual(self.request("PATCH", "/courses/2/credits", 2, json={"credits": 3}).status_code, 403)
+        self.assertEqual(self.request("PATCH", "/courses/1/credits", 3, json={"credits": 3}).status_code, 403)
+        self.assertEqual(self.request("PATCH", "/courses/4/credits", 1, json={"credits": 3}).status_code, 404)
+
     def test_unassigned_accounts_and_invalid_tokens_fail_closed(self):
         self.db.get(User,9).institution_id=None
         self.db.commit()
@@ -202,12 +246,19 @@ class InstitutionAccessTest(unittest.TestCase):
         self.assertEqual(self.request("GET","/institutions/current",None).status_code,401)
 
     def test_erp_only_receives_configured_institution(self):
-        with patch.object(settings,"erp_base_url","https://erp.example.com"), patch.object(settings,"erp_institution_id",1), patch("app.integrations.erp_client.httpx.post") as post:
-            sync_attendance_to_erp("test@beta.edu","CS101",30,True,institution_id=2)
-            sync_attendance_to_erp("test@alpha.edu","CS101",30,True)
+        self.db.add(ERPIntegration(institution_id=1, base_url="https://erp.example.com",
+                                   encrypted_api_token=encrypt_secret("isolated-test-token"), enabled=True))
+        self.db.commit()
+        with patch("app.integrations.erp_client.httpx.post") as post:
+            post.return_value.status_code = 200
+            # Beta has no integration and must never use Alpha's connection.
+            self.assertFalse(sync_attendance_to_erp(self.db, self.db.query(Attendance).filter(Attendance.session_id == 4).one(),
+                                                     self.db.get(User,12), self.db.get(Course,4), self.db.get(ClassSession,4)))
             post.assert_not_called()
-            sync_attendance_to_erp("test@alpha.edu","CS101",30,True,institution_id=1)
+            self.assertTrue(sync_attendance_to_erp(self.db, self.db.query(Attendance).filter(Attendance.session_id == 1).one(),
+                                                    self.db.get(User,3), self.db.get(Course,1), self.db.get(ClassSession,1)))
             post.assert_called_once()
+            self.assertNotIn("isolated-test-token", self.db.query(ERPIntegration).filter_by(institution_id=1).one().encrypted_api_token)
 
     def test_migrated_institution_admin_bootstrap_never_promotes_accounts(self):
         from scripts.create_institution_admin import bootstrap
@@ -228,7 +279,7 @@ class InstitutionAccessTest(unittest.TestCase):
         self.assertEqual(self.db.get(User,3).role,UserRole.student)
 
     def test_course_code_can_repeat_only_in_another_institution(self):
-        payload={"name":"Test course","code":"NEW101","department":"CS"}
+        payload={"name":"Test course","code":"NEW101","department":"CS","program":"B.Tech CS","batch":"2026-2030","semester_number":1}
         self.assertEqual(self.request("POST","/courses/",2,json=payload).status_code,201)
         self.assertEqual(self.request("POST","/courses/",11,json=payload).status_code,201)
         self.assertEqual(self.request("POST","/courses/",2,json=payload).status_code,400)

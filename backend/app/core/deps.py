@@ -12,7 +12,7 @@ from app.core.institution_domains import request_login_host, institution_for_hos
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
 
-def get_current_user(request: Request, token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
+def get_authenticated_user(request: Request, token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -37,6 +37,15 @@ def get_current_user(request: Request, token: str = Depends(oauth2_scheme), db: 
     if host and institution_for_host(host, db).id != user.institution_id:
         raise credentials_exception
     return user
+
+
+def get_current_user(current_user: User = Depends(get_authenticated_user)) -> User:
+    if current_user.must_change_password:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Change your temporary password before using EKEEKRTA",
+        )
+    return current_user
 
 
 def require_roles(*roles: UserRole):

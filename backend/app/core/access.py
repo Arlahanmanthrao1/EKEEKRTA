@@ -1,6 +1,6 @@
 """Shared, fail-closed institution and role boundaries for every API."""
 from fastapi import HTTPException
-from sqlalchemy import func, false
+from sqlalchemy import func, false, or_
 from app.models.user import User, UserRole
 from app.models.course import Course, Enrollment
 from app.models.institution import Department
@@ -30,8 +30,17 @@ def courses_query(db, user, catalog=False):
         query = query.filter(Course.faculty_id == user.id)
     elif user.role == UserRole.hod:
         query = query.filter(Course.department == user.department) if user.department else query.filter(false())
-    elif user.role == UserRole.student and not catalog:
-        query = query.filter(Course.id.in_(db.query(Enrollment.course_id).filter(Enrollment.student_id == user.id)))
+    elif user.role == UserRole.student:
+        if catalog:
+            query = query.filter(
+                or_(Course.department.is_(None), func.lower(Course.department) == (user.department or "").lower()),
+                or_(Course.program.is_(None), func.lower(Course.program) == (user.program or "").lower()),
+                or_(Course.batch.is_(None), func.lower(Course.batch) == (user.batch or "").lower()),
+                or_(Course.section.is_(None), func.lower(Course.section) == (user.section or "").lower()),
+                or_(Course.semester_number.is_(None), Course.semester_number == user.semester_number),
+            )
+        else:
+            query = query.filter(Course.id.in_(db.query(Enrollment.course_id).filter(Enrollment.student_id == user.id)))
     return query
 
 

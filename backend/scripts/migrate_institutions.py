@@ -20,7 +20,8 @@ def scope_course_codes(connection):
     if old_constraints and connection.dialect.name == "sqlite":
         if connection.execute(text("PRAGMA foreign_keys")).scalar():
             raise ValueError("SQLite migration requires foreign keys disabled before the transaction; use the CLI.")
-        expected = {"id", "institution_id", "name", "code", "department", "semester", "course_type", "faculty_id", "created_at"}
+        expected = {"id", "institution_id", "name", "code", "department", "semester", "course_type", "program",
+                    "batch", "semester_number", "section", "enrollment_mode", "credits", "faculty_id", "created_at"}
         if {c["name"] for c in inspector.get_columns("courses")} != expected:
             raise ValueError("Unexpected course columns. Review the migration instead of losing custom data.")
         if any(index["name"] not in {"ix_courses_id", "ix_courses_institution_id"} for index in inspector.get_indexes("courses")):
@@ -30,12 +31,15 @@ def scope_course_codes(connection):
         connection.execute(text("""CREATE TABLE courses_institution_upgrade (
             id INTEGER NOT NULL PRIMARY KEY, institution_id INTEGER REFERENCES institutions(id),
             name VARCHAR NOT NULL, code VARCHAR NOT NULL, department VARCHAR, semester VARCHAR,
-            course_type VARCHAR NOT NULL DEFAULT 'academic',
-            faculty_id INTEGER REFERENCES users(id), created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            course_type VARCHAR NOT NULL DEFAULT 'academic', program VARCHAR, batch VARCHAR,
+            semester_number INTEGER, section VARCHAR, enrollment_mode VARCHAR NOT NULL DEFAULT 'elective',
+            credits FLOAT, faculty_id INTEGER REFERENCES users(id), created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             CONSTRAINT uq_courses_institution_code UNIQUE (institution_id, code))"""))
         connection.execute(text("""INSERT INTO courses_institution_upgrade
-            (id, institution_id, name, code, department, semester, course_type, faculty_id, created_at)
-            SELECT id, institution_id, name, code, department, semester, course_type, faculty_id, created_at FROM courses"""))
+            (id, institution_id, name, code, department, semester, course_type, program, batch,
+             semester_number, section, enrollment_mode, credits, faculty_id, created_at)
+            SELECT id, institution_id, name, code, department, semester, course_type, program, batch,
+                   semester_number, section, enrollment_mode, credits, faculty_id, created_at FROM courses"""))
         connection.execute(text("DROP TABLE courses"))
         connection.execute(text("ALTER TABLE courses_institution_upgrade RENAME TO courses"))
         connection.execute(text("CREATE INDEX ix_courses_id ON courses(id)"))
@@ -65,8 +69,20 @@ def migrate(connection, name, domain, email=None):
         if "institution_id" not in {c["name"] for c in inspect(connection).get_columns(table)}:
             connection.execute(text(f"ALTER TABLE {table} ADD COLUMN institution_id INTEGER REFERENCES institutions(id)"))
         connection.execute(text(f"CREATE INDEX IF NOT EXISTS ix_{table}_institution_id ON {table} (institution_id)"))
-    if "course_type" not in {c["name"] for c in inspect(connection).get_columns("courses")}:
-        connection.execute(text("ALTER TABLE courses ADD COLUMN course_type VARCHAR NOT NULL DEFAULT 'academic'"))
+    additions = {
+        "users": {"program": "VARCHAR", "batch": "VARCHAR", "semester_number": "INTEGER", "section": "VARCHAR",
+                  "institutional_id": "VARCHAR(120)",
+                  "must_change_password": "BOOLEAN NOT NULL DEFAULT FALSE",
+                  "erp_password_initialized": "BOOLEAN NOT NULL DEFAULT FALSE"},
+        "courses": {"course_type": "VARCHAR NOT NULL DEFAULT 'academic'", "program": "VARCHAR", "batch": "VARCHAR",
+                    "semester_number": "INTEGER", "section": "VARCHAR",
+                    "enrollment_mode": "VARCHAR NOT NULL DEFAULT 'elective'", "credits": "FLOAT"},
+    }
+    for table, columns in additions.items():
+        present = {c["name"] for c in inspect(connection).get_columns(table)}
+        for column, definition in columns.items():
+            if column not in present:
+                connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {definition}"))
     institution_id = connection.execute(text("SELECT id FROM institutions WHERE email_domain = :domain"), {"domain": domain}).scalar()
     if institution_id is None:
         result = connection.execute(Institution.__table__.insert().values(name=name, email=email, email_domain=domain))

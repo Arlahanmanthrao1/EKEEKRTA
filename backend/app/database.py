@@ -35,14 +35,40 @@ def ensure_schema_compatibility():
         with engine.begin() as connection:
             connection.execute(text("ALTER TABLE class_sessions ADD COLUMN ended_at DATETIME"))
 
-    if "courses" in tables and "course_type" not in {
-        column["name"] for column in inspector.get_columns("courses")
-    }:
+    additions = {
+        "institutions": {
+            "default_theme": "VARCHAR(20) NOT NULL DEFAULT 'light'",
+            "grading_scale_max": "FLOAT NOT NULL DEFAULT 10",
+            "passing_grade_point": "FLOAT NOT NULL DEFAULT 4",
+        },
+        "users": {
+            "program": "VARCHAR", "batch": "VARCHAR", "semester_number": "INTEGER", "section": "VARCHAR",
+            "institutional_id": "VARCHAR(120)",
+            "must_change_password": "BOOLEAN NOT NULL DEFAULT FALSE",
+            "erp_password_initialized": "BOOLEAN NOT NULL DEFAULT FALSE",
+        },
+        "courses": {
+            "course_type": "VARCHAR NOT NULL DEFAULT 'academic'", "program": "VARCHAR", "batch": "VARCHAR",
+            "semester_number": "INTEGER", "section": "VARCHAR",
+            "enrollment_mode": "VARCHAR NOT NULL DEFAULT 'elective'",
+            "credits": "FLOAT",
+        },
+    }
+    for table, expected in additions.items():
+        if table not in tables:
+            continue
+        present = {column["name"] for column in inspect(engine).get_columns(table)}
         with engine.begin() as connection:
-            if engine.dialect.name == "postgresql":
-                connection.execute(text("ALTER TABLE courses ADD COLUMN IF NOT EXISTS course_type VARCHAR NOT NULL DEFAULT 'academic'"))
-            else:
-                connection.execute(text("ALTER TABLE courses ADD COLUMN course_type VARCHAR NOT NULL DEFAULT 'academic'"))
+            for name, definition in expected.items():
+                if name not in present:
+                    qualifier = " IF NOT EXISTS" if engine.dialect.name == "postgresql" else ""
+                    connection.execute(text(f"ALTER TABLE {table} ADD COLUMN{qualifier} {name} {definition}"))
+    if "users" in tables:
+        with engine.begin() as connection:
+            connection.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_user_institutional_id "
+                "ON users (institution_id, institutional_id) WHERE institutional_id IS NOT NULL"
+            ))
 
 
 # Kept as a compatibility alias for existing imports and operator scripts.

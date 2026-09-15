@@ -6,7 +6,8 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.institution import Institution, Department
 from app.models.user import User, UserRole
-from app.schemas.institution import InstitutionProfile, InstitutionOut, DepartmentCreate, DepartmentOut
+from app.schemas.institution import (InstitutionGradingUpdate, InstitutionProfile, InstitutionOut,
+                                     InstitutionThemeUpdate, DepartmentCreate, DepartmentOut)
 from app.schemas.user import UserCreate, UserOut
 from app.core.security import hash_password
 from app.core.deps import get_current_user, require_roles
@@ -91,6 +92,27 @@ def update_institution(payload: InstitutionProfile, db: Session = Depends(get_db
         raise HTTPException(422, "Contact email must use your registered institution domain")
     for key, value in payload.model_dump(mode="json").items():
         setattr(institution, key, value)
+    db.commit()
+    db.refresh(institution)
+    return institution
+
+
+@router.patch("/current/theme", response_model=InstitutionOut)
+def update_institution_theme(payload: InstitutionThemeUpdate, db: Session = Depends(get_db),
+                             user: User = Depends(require_roles(UserRole.admin))):
+    institution = db.get(Institution, tenant(user))
+    institution.default_theme = payload.default_theme
+    db.commit()
+    db.refresh(institution)
+    return institution
+
+
+@router.patch("/current/grading", response_model=InstitutionOut)
+def update_institution_grading(payload: InstitutionGradingUpdate, db: Session = Depends(get_db),
+                               user: User = Depends(require_roles(UserRole.admin))):
+    institution = db.get(Institution, tenant(user))
+    institution.grading_scale_max = payload.grading_scale_max
+    institution.passing_grade_point = payload.passing_grade_point
     db.commit()
     db.refresh(institution)
     return institution

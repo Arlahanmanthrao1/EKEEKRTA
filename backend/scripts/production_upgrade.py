@@ -32,6 +32,11 @@ def fingerprint(connection, tables):
                 values.pop("department", None)  # Migration canonicalizes whitespace/case.
             if table == "courses":
                 values.pop("course_type", None)  # Added metadata defaults to academic for legacy records.
+                for field in ("program", "batch", "semester_number", "section", "enrollment_mode"):
+                    values.pop(field, None)
+            if table == "users":
+                for field in ("program", "batch", "semester_number", "section", "institutional_id"):
+                    values.pop(field, None)
             def stable_value(value):
                 if isinstance(value, datetime) and value.tzinfo is not None:
                     return value.astimezone(timezone.utc).isoformat()

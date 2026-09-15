@@ -17,6 +17,7 @@ from app.models.assignment import Assignment, Submission
 from app.models.attendance import Attendance, ClassSession
 from app.models.quiz import Quiz, QuizAttempt
 from app.routers.courses import router
+from app.routers.users import router as users_router
 
 
 class CourseEnrollmentTest(unittest.TestCase):
@@ -30,7 +31,12 @@ class CourseEnrollmentTest(unittest.TestCase):
         self.db.commit()
         for ident, role in [(1, UserRole.faculty), (2, UserRole.faculty), (3, UserRole.student),
                             (4, UserRole.student), (5, UserRole.hod), (6, UserRole.admin)]:
-            self.db.add(User(institution_id=1, id=ident, name=f"Test {ident}", email=f"test{ident}@hitam.org", role=role, hashed_password="unused"))
+            self.db.add(User(institution_id=1, id=ident, name=f"Test {ident}", email=f"test{ident}@hitam.org", role=role,
+                             department="CS" if role != UserRole.admin else None, hashed_password="unused",
+                             program="B.Tech CS" if role == UserRole.student else None,
+                             batch="2026-2030" if role == UserRole.student else None,
+                             semester_number=3 if ident == 3 else 4 if ident == 4 else None,
+                             section="A" if role == UserRole.student else None))
         self.db.flush()
         self.db.add_all([Course(institution_id=1, id=10, name="Owned", code="OWN", faculty_id=1),
                          Course(institution_id=1, id=20, name="Other", code="OTHER", faculty_id=2)])
@@ -46,6 +52,7 @@ class CourseEnrollmentTest(unittest.TestCase):
         self.db.commit()
         api = FastAPI()
         api.include_router(router)
+        api.include_router(users_router)
         api.dependency_overrides[get_db] = lambda: self.db
         self.client = TestClient(api)
         self.client.headers.update(self.auth(1))
@@ -112,6 +119,39 @@ class CourseEnrollmentTest(unittest.TestCase):
         self.assertEqual(len(self.client.get("/courses/10/students").json()), 2)
         self.assertEqual(self.client.delete("/courses/10/students/3").status_code, 204)
         self.assertEqual(self.db.query(Enrollment).count(), 2)
+
+    def test_compulsory_course_auto_enrolls_only_matching_cohort(self):
+        response = self.client.post("/courses/", json={"name":"Cohort course","code":"COH301","department":"CS",
+            "course_type":"academic","program":"B.Tech CS","batch":"2026-2030","semester_number":3,
+            "section":"A","enrollment_mode":"compulsory"})
+        self.assertEqual(response.status_code,201,response.text)
+        course_id=response.json()["id"]
+        enrolled = [row[0] for row in self.db.query(Enrollment.student_id).filter(Enrollment.course_id==course_id).all()]
+        self.assertEqual(enrolled,[3])
+
+    def test_elective_catalog_and_enrollment_are_cohort_restricted(self):
+        matching=Course(institution_id=1,name="Matching elective",code="EL301",faculty_id=1,department="CS",
+                        program="B.Tech CS",batch="2026-2030",semester_number=3,section="A",enrollment_mode="elective")
+        other=Course(institution_id=1,name="Other semester",code="EL401",faculty_id=1,department="CS",
+                     program="B.Tech CS",batch="2026-2030",semester_number=4,section="A",enrollment_mode="elective")
+        self.db.add_all([matching,other]);self.db.commit()
+        catalog=self.client.get("/courses/",headers=self.auth(3))
+        self.assertIn(matching.id,[entry["id"] for entry in catalog.json()])
+        self.assertNotIn(other.id,[entry["id"] for entry in catalog.json()])
+        self.assertEqual(self.client.post(f"/courses/{matching.id}/enroll",headers=self.auth(3)).status_code,201)
+        self.assertEqual(self.client.post(f"/courses/{other.id}/enroll",headers=self.auth(3)).status_code,403)
+
+    def test_admin_promotion_preserves_history_and_adds_next_compulsory_course(self):
+        next_course=Course(institution_id=1,name="Next semester",code="NEXT401",faculty_id=1,department="CS",
+                           program="B.Tech CS",batch="2026-2030",semester_number=4,section="A",enrollment_mode="compulsory")
+        self.db.add(next_course);self.db.commit()
+        response=self.client.post("/users/students/promote",headers=self.auth(6),json={"department":"CS","program":"B.Tech CS",
+            "batch":"2026-2030","from_semester":3,"to_semester":4})
+        self.assertEqual(response.status_code,200,response.text)
+        self.assertEqual(response.json()["promoted_count"],1)
+        self.assertEqual(self.db.get(User,3).semester_number,4)
+        self.assertIsNotNone(self.db.query(Enrollment).filter_by(student_id=3,course_id=next_course.id).first())
+        self.assertIsNotNone(self.db.query(Enrollment).filter_by(student_id=3,course_id=10).first())
 
 
 if __name__ == "__main__":

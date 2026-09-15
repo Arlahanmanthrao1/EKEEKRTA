@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, UniqueConstraint, func
+from sqlalchemy import Column, Float, Integer, String, ForeignKey, DateTime, UniqueConstraint, func
 from sqlalchemy.orm import relationship
 
 from app.database import Base
@@ -15,6 +15,12 @@ class Course(Base):
     department = Column(String, nullable=True)
     semester = Column(String, nullable=True)
     course_type = Column(String, nullable=False, default="academic", server_default="academic")
+    program = Column(String, nullable=True)
+    batch = Column(String, nullable=True)
+    semester_number = Column(Integer, nullable=True)
+    section = Column(String, nullable=True)
+    enrollment_mode = Column(String, nullable=False, default="elective", server_default="elective")
+    credits = Column(Float, nullable=True)
     faculty_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

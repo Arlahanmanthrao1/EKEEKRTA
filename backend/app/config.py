@@ -33,9 +33,6 @@ class Settings(BaseSettings):
     code_runner_api_key: SecretStr = SecretStr("")
     code_runner_timeout_ms: int = Field(default=3000, ge=500, le=10000)
 
-    # Where the (dummy) college ERP is running, for pushing attendance sync calls.
-    erp_base_url: str = ""
-    erp_institution_id: int | None = None
     allowed_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     # Operator-approved host -> institution email domain. Registration never enables DNS.
     institution_login_hosts: dict[str, str] = Field(default_factory=dict)

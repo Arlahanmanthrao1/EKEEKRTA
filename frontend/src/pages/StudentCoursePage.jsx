@@ -4,6 +4,7 @@ import { apiFetch } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import DashboardShell, { EmptyState, Icon, StatCard } from "../components/dashboard/DashboardShell";
 import { QuizTaker } from "./StudentDashboard";
+import LectureNotesPanel from "../components/dashboard/LectureNotesPanel";
 import "../styles/dashboard.css";
 import "../styles/faculty-course.css";
 
@@ -107,13 +108,15 @@ export default function StudentCoursePage() {
     <Link className="course-back-link" to={`/student/${courseListPage}`}>← All {courseTypeLabel.toLowerCase()} courses</Link>
     <section className="course-workspace-hero"><div><div className="course-title-line"><span className="course-code">{course.code}</span><span className="pill pill-muted">{courseTypeLabel}</span></div><h1>{course.name}</h1><p>{course.department || "Department not set"} · {course.semester || "Semester not set"}</p></div>{activeSession && <button className="btn btn-primary" onClick={joinClass}><Icon name="video" /> Join live class</button>}</section>
     {error && <p className="error-banner" role="alert">{error}</p>}
-    <nav className="course-section-nav" aria-label="Course sections"><a href="#assignments">Assignments</a><a href="#quizzes">Quizzes</a><a href="#notes">Notes</a><a href="#pyqs">PYQs</a><a href="#materials">Other material</a></nav>
+    <nav className="course-section-nav" aria-label="Course sections"><a href="#assignments">Assignments</a><a href="#quizzes">Quizzes</a><a href="#lecture-notes">Lecture notes</a><a href="#notes">Notes</a><a href="#pyqs">PYQs</a><a href="#materials">Other material</a></nav>
     <section className="stats-grid course-stats"><StatCard icon="assignments" label="Assignments" value={assignments.length} /><StatCard icon="quiz" label="Quizzes" value={quizzes.length} tone="purple" /><StatCard icon="material" label="Notes" value={materialGroups.notes.length} tone="green" /><StatCard icon="material" label="PYQs" value={materialGroups.pyqs.length} tone="amber" /><StatCard icon="check" label="Attendance" value={attendancePercent === null ? "—" : `${attendancePercent}%`} tone={attendancePercent !== null && attendancePercent < 75 ? "red" : "blue"} /></section>
 
     <div className="course-workspace-grid">
       <section className="card panel-card course-workspace-section" id="assignments"><p className="section-eyebrow">Coursework</p><h2>Assignments</h2>{!assignments.length && <EmptyState>No assignments posted for this course.</EmptyState>}<div className="workspace-record-list">{assignments.map(assignment => { const submission = submissionFor(assignment.id); return <article key={assignment.id}><div className="split-row"><div><h3>{assignment.title}</h3><p>{assignment.due_date ? `Due ${new Date(assignment.due_date).toLocaleString()}` : "No deadline"} · {assignment.max_marks} marks</p></div>{submission && <span className={`pill ${submission.marks_obtained != null ? "pill-ok" : "pill-muted"}`}>{submission.marks_obtained != null ? `${submission.marks_obtained}/${assignment.max_marks}` : "Awaiting grade"}</span>}</div>{assignment.description && <p>{assignment.description}</p>}{!submission && <div className="inline-submit"><input className="field" type="url" aria-label={`File URL for ${assignment.title}`} placeholder="Paste your file URL" value={submitUrls[assignment.id] || ""} onChange={event => setSubmitUrls(current => ({ ...current, [assignment.id]: event.target.value }))} /><button className="btn btn-primary" disabled={submitting === assignment.id || !submitUrls[assignment.id]} onClick={() => submitAssignment(assignment.id)}>{submitting === assignment.id ? "Submitting…" : "Submit assignment"}</button></div>}</article>; })}</div></section>
 
       <section className="card panel-card course-workspace-section" id="quizzes"><p className="section-eyebrow">Assessment</p><h2>Quizzes</h2>{!quizzes.length && <EmptyState>No quizzes posted for this course.</EmptyState>}<div className="workspace-record-list">{quizzes.map(quiz => <article key={quiz.id}><div className="split-row"><div><h3>{quiz.title}</h3><p>{quiz.total_marks} marks</p></div>{completedQuizzes[quiz.id] !== undefined ? <span className="pill pill-ok">{completedQuizzes[quiz.id].toFixed(0)}%</span> : <button className="btn btn-soft" onClick={() => openQuiz(quiz)}>Take quiz</button>}</div>{activeQuiz?.id === quiz.id && <QuizTaker quiz={activeQuiz} onClose={() => setActiveQuiz(null)} onSubmitted={(quizId, score) => setCompletedQuizzes(current => ({ ...current, [quizId]: score }))} />}</article>)}</div></section>
+
+      <LectureNotesPanel courseId={id} sessions={sessions} />
 
       <MaterialSection id="notes" eyebrow="Study resources" title="Notes" materials={materialGroups.notes} emptyText="No notes uploaded for this course." />
       <MaterialSection id="pyqs" eyebrow="Exam preparation" title="Previous Year Questions (PYQs)" materials={materialGroups.pyqs} emptyText="No previous-year questions uploaded for this course." />

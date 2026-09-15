@@ -55,6 +55,12 @@ class InstitutionDomainTest(unittest.TestCase):
         self.assertNotIn("login_host", decode_access_token(token))
         self.assertEqual(self.client.get("/auth/me", headers={"Authorization": f"Bearer {token}"}).status_code, 200)
 
+    def test_public_vercel_address_is_always_the_generic_login(self):
+        headers = {"Origin": "https://ekeekrta.vercel.app", "X-Institution-Host": "ekeekrta.vercel.app"}
+        response = self.login(headers=headers)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertNotIn("login_host", decode_access_token(response.json()["access_token"]))
+
     def test_custom_login_and_token_are_institution_scoped(self):
         headers = {"Origin": "https://ekeekrta.alpha.edu", "X-Institution-Host": "ekeekrta.alpha.edu"}
         response = self.login(headers=headers)

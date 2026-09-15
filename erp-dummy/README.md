@@ -1,44 +1,60 @@
-# Dummy College ERP
+# College ERP Sandbox
 
-A standalone service simulating a college's pre-existing ERP system. It has
-its own database and its own seeded student records — the LMS platform
-pushes attendance updates into it via one API call, the way a real
-integration with an existing college system would work.
+A separate, authenticated ERP service for demonstrating EKEEKRTA integration
+when a college does not provide access to its real ERP. It has its own database
+and can be deployed independently. It does not create seeded or fabricated
+records: users, courses and attendance appear only after an administrator enters
+or synchronizes real records. Student, faculty, and HOD master records are
+entered in this ERP and reviewed before import into EKEEKRTA; course and meeting
+attendance records flow back to the ERP.
+
+Public sandbox: `https://ekeekrta-erp-sandbox.vercel.app`
 
 ## Setup
 
-```bash
-python3 -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload --port 9000
+```powershell
+Copy-Item .env.example .env
+..\backend\.venv\Scripts\python.exe -m pip install -r requirements.txt
+..\backend\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 9000
 ```
 
-Dashboard: `http://localhost:9000` (auto-refreshes every 5s)
-JSON: `http://localhost:9000/api/attendance`
+Before starting, edit `.env`:
 
-## Integration point
+- Set `ERP_API_TOKEN` to a long random secret.
+- Set `ERP_INSTITUTION_ID` to a short code such as `HITAM`.
+- Keep SQLite for local testing. Use a separate hosted PostgreSQL database for
+  a public deployment.
 
-`POST /api/attendance/sync` — called automatically by the LMS backend's
-`attendance.py` router every time it processes a Jitsi join/leave event.
-Payload:
+Open `http://localhost:9000` and enter the ERP token. The protected dashboard
+shows users, courses and attendance and refreshes every five seconds. Use
+**Add User** to create an ERP student, faculty member, or HOD. Students require
+the official roll number, college email, department, programme, batch, semester
+and section. Staff require an official employee number, email, and department.
 
-```json
-{
-  "student_email": "student1@college.edu",
-  "course_code": "CS201",
-  "duration_minutes": 30.0,
-  "present": true
-}
-```
+## Connect EKEEKRTA
 
-Students are matched between the two systems **by email** — see
-`seed_students()` in `app/main.py`. A real integration would more likely
-match on roll number or a shared college-wide student ID; this is a known
-simplification worth a line in your project report.
+In **EKEEKRTA Admin → ERP Integration**, enter:
+
+- ERP base URL: use `http://127.0.0.1:9000` while both services run locally.
+  Production deployments require a public HTTPS address.
+- Institution ID in ERP: the same value as `ERP_INSTITUTION_ID`.
+- ERP API token: the same value as `ERP_API_TOKEN`.
+
+Save, select **Import ERP user directory**, test the connection, enable the
+connection and run **Preview ERP users**. Review every Create, Update, and Skip
+decision, then select **Confirm user import**. Courses and meeting attendance can be
+sent in the opposite direction using their corresponding selections. The REST contract is documented in
+[`docs/erp-integration.md`](../docs/erp-integration.md).
+
+The ERP dashboard also has an **Academic Results** screen for a registered
+student's official CGPA, completed credits, remaining credits, and grading
+scale. EKEEKRTA reads one matching record through the protected
+`GET /api/ekeekrta/results/{institutional_id}` contract only when that student
+requests a roadmap refresh. Results are not seeded, and the student identity
+must exist in the ERP before a result can be saved.
 
 ## Why this is a separate service, not a module in `backend/`
 
-This mirrors how it'd actually work in a real college: the ERP is someone
-else's existing system, running independently, that your platform talks to
-over HTTP. Keeping it as its own service (own port, own database) makes
-that integration real and demoable, instead of just simulated in code.
+This mirrors a real integration boundary: the ERP runs independently with its
+own credentials, database, API validation and idempotency receipts. Restarting
+or losing access to EKEEKRTA does not expose the ERP dashboard token.

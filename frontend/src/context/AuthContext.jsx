@@ -1,9 +1,11 @@
 import { createContext, useContext, useState, useEffect, useCallback } from "react";
 import { apiFetch, login as loginRequest } from "../api/client";
+import { useTheme } from "./ThemeContext";
 
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
+  const { setInstitutionDefault } = useTheme();
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -16,6 +18,7 @@ export function AuthProvider({ children }) {
     try {
       const me = await apiFetch("/auth/me");
       setUser(me);
+      setInstitutionDefault(me.institution?.default_theme || "light");
     } catch (error) {
       // Token expired or invalid - clear it so the login page shows again.
       localStorage.removeItem("lms_token");
@@ -24,7 +27,7 @@ export function AuthProvider({ children }) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [setInstitutionDefault]);
 
   useEffect(() => {
     loadUser();

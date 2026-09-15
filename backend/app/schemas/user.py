@@ -11,6 +11,11 @@ class UserCreate(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8, max_length=128)
     department: str | None = Field(default=None, max_length=120)
+    program: str | None = Field(default=None, max_length=120)
+    batch: str | None = Field(default=None, min_length=2, max_length=40)
+    semester_number: int | None = Field(default=None, ge=1, le=8)
+    section: str | None = Field(default=None, max_length=40)
+    institutional_id: str | None = Field(default=None, min_length=2, max_length=120)
 
     @field_validator("name")
     @classmethod
@@ -33,7 +38,7 @@ class UserCreate(BaseModel):
         v = v.lower()
         return v
 
-    @field_validator("department")
+    @field_validator("department", "program", "batch", "section", "institutional_id")
     @classmethod
     def clean_department(cls, value: str | None) -> str | None:
         if value is None:
@@ -50,5 +55,14 @@ class UserOut(BaseModel):
     email: EmailStr
     role: UserRole
     department: str | None = None
+    program: str | None = None
+    batch: str | None = None
+    semester_number: int | None = None
+    section: str | None = None
+    institutional_id: str | None = None
     institution_id: int | None = None
     institution: InstitutionOut | None = None
+
+
+class UserSessionOut(UserOut):
+    must_change_password: bool = False

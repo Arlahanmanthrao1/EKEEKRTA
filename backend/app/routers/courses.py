@@ -5,11 +5,13 @@ from sqlalchemy.exc import IntegrityError
 from app.database import get_db
 from app.models.course import Course, Enrollment
 from app.models.user import User, UserRole
-from app.schemas.course import CourseCreate, CourseOut, EnrollmentOut
+from app.schemas.course import CourseCreate, CourseCreditsUpdate, CourseOut, EnrollmentOut
 from app.schemas.user import UserOut
 from app.core.deps import get_current_user, require_roles
 
 from app.core.access import course_access, courses_query, department_name, tenant
+from app.core.cohorts import enroll_matching_students, student_matches_course
+from app.integrations.erp_client import sync_course_to_erp
 
 router = APIRouter(prefix="/courses", tags=["courses"])
 
@@ -26,16 +28,21 @@ def create_course(
 
     values = course_in.model_dump()
     values["department"] = department_name(db, current_user, course_in.department)
+    if values["semester_number"] is not None:
+        values["semester"] = f"Semester {values['semester_number']}"
     if current_user.role == UserRole.faculty and values["department"] != current_user.department:
         raise HTTPException(403, "Create courses only in your assigned department")
     course = Course(**values, faculty_id=current_user.id, institution_id=tenant(current_user))
     db.add(course)
     try:
+        db.flush()
+        enroll_matching_students(db, course)
         db.commit()
     except IntegrityError:
         db.rollback()
         raise HTTPException(409, "Course code already exists in your institution") from None
     db.refresh(course)
+    sync_course_to_erp(db, course, current_user.institution)
     return course
 
 
@@ -64,13 +71,25 @@ def get_course(course_id: int, db: Session = Depends(get_db), _=Depends(get_curr
     return course_access(db, _, course_id, catalog=True)
 
 
+@router.patch("/{course_id}/credits", response_model=CourseOut)
+def update_course_credits(course_id: int, payload: CourseCreditsUpdate, db: Session = Depends(get_db),
+                          current_user: User = Depends(require_roles(UserRole.faculty, UserRole.admin))):
+    course = course_access(db, current_user, course_id, manage=True)
+    course.credits = payload.credits
+    db.commit(); db.refresh(course)
+    sync_course_to_erp(db, course, current_user.institution)
+    return course
+
+
 @router.post("/{course_id}/enroll", response_model=EnrollmentOut, status_code=201)
 def enroll(
     course_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.student)),
 ):
-    course_access(db, current_user, course_id, catalog=True)
+    course = course_access(db, current_user, course_id, catalog=True)
+    if not student_matches_course(current_user, course):
+        raise HTTPException(status_code=403, detail="This course is assigned to a different student cohort")
 
     existing = (
         db.query(Enrollment)

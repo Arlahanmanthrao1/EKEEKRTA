@@ -13,7 +13,8 @@ from app.config import settings
 from app.database import Base, get_db
 from app.models.user import User, UserRole
 from app.models.institution import Institution, Department
-from app.core.security import verify_password, create_access_token
+from app.models.erp import ERPIntegration
+from app.core.security import verify_password, hash_password, create_access_token
 from app.routers.auth import router
 from app.routers.courses import router as courses_router
 
@@ -41,7 +42,8 @@ class RegistrationTest(unittest.TestCase):
         p = patch.object(settings, "allowed_email_domain", "college.edu")
         p.start()
         self.addCleanup(p.stop)
-        self.payload = dict(name=" Test Student ", email="test@college.edu", password="Test-password-123", department=" CS ")
+        self.payload = dict(name=" Test Student ", email="test@college.edu", password="Test-password-123", department=" CS ",
+                            institutional_id="TEST-001", program="B.Tech CS", batch="2026-2030", semester_number=1, section="A")
 
     def tearDown(self):
         self.client.close()
@@ -61,6 +63,29 @@ class RegistrationTest(unittest.TestCase):
         self.assertEqual(login.status_code, 200, login.text)
         self.assertIn("access_token", login.json())
 
+    def test_temporary_official_id_password_must_be_changed(self):
+        user = User(institution_id=1, name="Imported Student", email="imported@college.edu",
+                    institutional_id="ERP-001", role=UserRole.student,
+                    hashed_password=hash_password("ERP-001"),
+                    must_change_password=True, erp_password_initialized=True)
+        self.db.add(user); self.db.commit()
+        login = self.client.post("/auth/login", data={"username": user.email, "password": "ERP-001"}, headers={"Authorization": ""})
+        self.assertEqual(login.status_code, 200, login.text)
+        headers = {"Authorization": "Bearer " + login.json()["access_token"]}
+        profile = self.client.get("/auth/me", headers=headers)
+        self.assertTrue(profile.json()["must_change_password"])
+        self.assertEqual(self.client.get("/courses/", headers=headers).status_code, 403)
+        self.assertEqual(self.client.post("/auth/change-password", headers=headers,
+                                         json={"current_password": "wrong", "new_password": "new-secure-password"}).status_code, 400)
+        self.assertEqual(self.client.post("/auth/change-password", headers=headers,
+                                         json={"current_password": "ERP-001", "new_password": "ERP-001"}).status_code, 422)
+        changed = self.client.post("/auth/change-password", headers=headers,
+                                   json={"current_password": "ERP-001", "new_password": "new-secure-password"})
+        self.assertEqual(changed.status_code, 200, changed.text)
+        self.assertFalse(self.db.get(User, user.id).must_change_password)
+        self.assertEqual(self.client.post("/auth/login", data={"username": user.email, "password": "ERP-001"}, headers={"Authorization": ""}).status_code, 401)
+        self.assertEqual(self.client.post("/auth/login", data={"username": user.email, "password": "new-secure-password"}, headers={"Authorization": ""}).status_code, 200)
+
     def test_roles_cannot_be_requested(self):
         for role in ["student", "faculty", "hod", "admin"]:
             response = self.client.post(self.endpoint, json={**self.payload, "role": role})
@@ -72,6 +97,12 @@ class RegistrationTest(unittest.TestCase):
         response = self.client.post(self.endpoint, json={**self.payload, "email": "TEST@COLLEGE.EDU"})
         self.assertEqual(response.status_code, 400)
         self.assertEqual(self.db.query(User).count(), 2)
+
+    def test_duplicate_registration_number_is_rejected(self):
+        self.assertEqual(self.client.post(self.endpoint, json=self.payload).status_code, 201)
+        response = self.client.post(self.endpoint, json={**self.payload, "email": "other@college.edu"})
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertIn("Official institution ID", response.json()["detail"])
 
     def test_reject_wrong_domain_and_invalid_fields(self):
         for invalid in [{"email": "test@example.com"}, {"email": "test@evilcollege.edu"},
@@ -111,6 +142,15 @@ class RegistrationTest(unittest.TestCase):
             self.assertEqual(response.status_code, 403)
         self.assertIsNone(self.db.query(User).filter(User.email == self.payload["email"]).first())
 
+    def test_admin_can_register_student_when_erp_import_is_enabled(self):
+        self.db.add(ERPIntegration(institution_id=1, base_url="https://erp.college.edu",
+                                   encrypted_api_token="encrypted-test-value", enabled=True,
+                                   sync_students=True, sync_courses=True, sync_attendance=True))
+        self.db.commit()
+        response = self.client.post(self.endpoint, json=self.payload)
+        self.assertEqual(response.status_code, 201, response.text)
+        self.assertEqual(response.json()["institutional_id"], "TEST-001")
+
 
 class FacultyRegistrationTest(RegistrationTest):
     endpoint = "/auth/register-faculty"
@@ -129,7 +169,8 @@ class FacultyRegistrationTest(RegistrationTest):
         self.assertEqual(login.status_code, 200)
         headers = {"Authorization": "Bearer " + login.json()["access_token"]}
         self.assertEqual(self.client.get("/auth/me", headers=headers).json()["role"], "faculty")
-        course = self.client.post("/courses/", headers=headers, json={"name": "Test Course", "code": "TEST101", "department": "CS"})
+        course = self.client.post("/courses/", headers=headers, json={"name": "Test Course", "code": "TEST101", "department": "CS",
+                                                                       "program": "B.Tech CS", "batch": "2026-2030", "semester_number": 1})
         self.assertEqual(course.status_code, 201, course.text)
         self.assertEqual(course.json()["faculty_id"], created.json()["id"])
         self.assertEqual(course.json()["course_type"], "academic")

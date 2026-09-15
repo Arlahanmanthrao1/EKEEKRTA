@@ -127,7 +127,8 @@ https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/r
 - Token expiry is not a promise of meeting duration or participant capacity.
 - Classroom code includes student fullscreen handling, faculty fullscreen-policy
   controls, explicit session ending, and disconnect diagnostics.
-- The erp-dummy folder is an OPTIONAL SIMULATION with seeded demo records.
+- The erp-dummy folder is an OPTIONAL SIMULATION with its own empty database;
+  it does not seed fabricated records.
   It is not a real college ERP and is not part of the hosted production setup.
   ERP_BASE_URL remains empty unless a reachable integration is configured.
 - Turning off the developer's device does not stop the hosted LMS. Localhost
@@ -659,3 +660,387 @@ institution-only onboarding workflow is documented below.
   faculty course-creation routes returned HTTP 200. The deployed frontend bundle
   contains the Course Type and Non-Academic controls. This phase is included in
   the 5 September 2026 GitHub update.
+
+-----------------------------------------------------------------------------
+28. COHORT-BASED SEMESTER COURSE ASSIGNMENT — 5 SEPTEMBER 2026 (DEPLOYED)
+-----------------------------------------------------------------------------
+- Student profiles now store the real academic cohort fields required by a
+  college: programme, admission batch, current semester (1–8), calculated year
+  (1–4), and section. Administrators provide these details when registering or
+  editing a student account.
+- Faculty course creation now targets a department, programme, batch, semester,
+  and optional section. Each course is also marked Compulsory or Elective.
+- Creating a Compulsory course automatically enrolls every existing student in
+  its matching cohort. Registering, editing, or promoting a student also finds
+  and enrolls that student in all matching compulsory courses.
+- Elective courses remain available for self-enrollment, but only students whose
+  institution and cohort match the course can see and enroll in them.
+- The administrator Semester Promotion page moves a selected department,
+  programme, and batch from one semester to the next. Promotion preserves all
+  previous course enrollments, attendance, marks, and class history, while
+  adding the new semester's matching compulsory courses.
+- HOD views remain limited to their department. Faculty course rosters display
+  each enrolled student's programme, batch, semester/year, section, and real
+  attendance. Faculty still see students only through courses they own.
+- Existing database records are preserved through additive SQLite/PostgreSQL
+  schema updates. No sample institution, account, student, course, or enrollment
+  data was inserted.
+- All 98 backend tests, all 41 dashboard-route checks, the frontend production
+  build, and source-format checks passed.
+- Backend production deployment: dpl_FTQff9Avp6DFFEuHiZ5x6Y6BJRAr
+  Immutable URL: https://smart-virtual-lms-backend-2jmcshkyw.vercel.app
+- Frontend production deployment: dpl_DCqycrgCwfBkZph7a8AmDY1ipes6
+  Immutable URL: https://smart-virtual-lms-frontend-qp2dh79yr.vercel.app
+- Stable public aliases verified on 5 September 2026:
+  https://smart-virtual-lms-backend-gules.vercel.app
+  https://smart-virtual-lms-frontend-ruby.vercel.app
+- Backend health, the protected semester-promotion endpoint, public login page,
+  and public Academic Progression page were verified after deployment. The
+  promotion endpoint returns HTTP 401 without a login token, confirming that
+  administrator access control is active.
+
+-----------------------------------------------------------------------------
+29. MULTI-INSTITUTION ERP CONNECTOR — 5 SEPTEMBER 2026 (BUILT LOCALLY)
+-----------------------------------------------------------------------------
+- Replaced the single hard-coded dummy attendance call with a real,
+  institution-scoped REST connector. Every institution administrator receives
+  an ERP Integration page for its own HTTPS endpoint and API token.
+- ERP API tokens are encrypted at rest using the backend SECRET_KEY, are never
+  returned to the browser, and are sent only as authorization headers to the
+  configured institution endpoint.
+- Added a required official registration/roll number for students and employee
+  ID for faculty/HOD accounts. These are the stable ERP matching identifiers;
+  email is retained as a login identity rather than used as a primary key.
+- Student creation/editing/promotion, course creation, and attendance updates
+  now produce institution-isolated student, course, or attendance upserts.
+- Failed delivery never rolls back the original EKEEKRTA action. It is recorded
+  in a durable delivery ledger with attempt count and HTTP status, and an
+  administrator can retry an individual record or the next waiting batch.
+- Added Test connection, Full sync, selective Students/Courses/Attendance
+  switches, automatic-sync enable/disable, and recent-sync status controls.
+- Full sync uses only current real database records and sends at most 25 waiting
+  events per request for serverless safety. No institution, student, course,
+  attendance, or ERP sample records are created.
+- The ERP implementation contract is documented in docs/erp-integration.md:
+  health, student upsert, course upsert, and attendance upsert endpoints,
+  Bearer authentication, idempotency keys, payload identifiers, and recovery.
+- All 104 backend tests passed, including ERP tenant isolation, credential
+  encryption, connection checks, complete sync, failure history, and retry.
+  All 42 dashboard-route checks and the frontend production build also passed.
+- This connector has not been deployed or enabled against an external ERP yet.
+  Activation requires the institution's real ERP HTTPS base URL, an API token,
+  and implementation of the documented ERP-side endpoints.
+
+-----------------------------------------------------------------------------
+30. INDEPENDENT COLLEGE ERP SANDBOX — 5 SEPTEMBER 2026 (BUILT LOCALLY)
+-----------------------------------------------------------------------------
+- Rebuilt erp-dummy as a separate authenticated ERP Sandbox for institutions
+  that cannot access their actual ERP. It owns its own database, credentials,
+  REST API, idempotency receipts, and live dashboard.
+- Removed automatic seed behavior from the active ERP tables. The sandbox
+  creates no fabricated students, courses, or attendance: records appear only
+  when the EKEEKRTA connector sends real application data.
+- Implemented the complete connector contract: protected health check,
+  student upsert, course upsert, attendance upsert, and protected dashboard
+  data. Official registration/roll and employee IDs are used for matching.
+- Every request requires the private Bearer token and, when configured, must
+  match the ERP's institution ID. Replayed idempotency revisions are harmless,
+  while a newer revision updates the existing ERP record.
+- Added a responsive token-protected dashboard with live totals and separate
+  Attendance, Students, and Courses tables. It refreshes every five seconds and
+  renders received values as text rather than executable HTML.
+- Local testing supports http://127.0.0.1:9000 only when the EKEEKRTA backend
+  is not running on Vercel. Public operation requires HTTPS. A Vercel project
+  definition and hosted-PostgreSQL support are included for later deployment.
+- All 3 sandbox service tests pass: authentication/institution isolation,
+  upsert/idempotency revisions, protected dashboard, and zero seed records.
+- A real local HTTP contract test also passed: one authenticated EKEEKRTA-format
+  student event was accepted and immediately appeared in the dashboard count.
+  Its temporary database was removed afterward; the working ERP database has
+  zero students, zero courses, and zero attendance records.
+- This sandbox is not public yet. Deployment requires a separate hosted
+  PostgreSQL DATABASE_URL plus a private ERP_API_TOKEN; the same token and ERP
+  URL will then be entered on EKEEKRTA's administrator ERP Integration page.
+
+-----------------------------------------------------------------------------
+31. HITAM-STYLE ERP SANDBOX INTERFACE — 5 SEPTEMBER 2026 (BUILT LOCALLY)
+-----------------------------------------------------------------------------
+- Redesigned the independent ERP Sandbox from the supplied HITAM ERP references:
+  deep-green institution masthead, accreditation line, announcement strip,
+  compact user bar, dense left menu, bordered report canvas, green accordions,
+  and gray ledger-style tables.
+- Added separate Dashboard, Student Profile, Academic Register, Attendance,
+  and Integration Status views. These views use only records received through
+  the EKEEKRTA integration and refresh automatically.
+- The Student Profile view groups the real synced profile and cohort data. The
+  Academic Register view shows synchronized course registration details. The
+  Attendance view aggregates actual received session records into Held, Attend,
+  and Percentage columns and supports Print and CSV Export.
+- Marks, fee details, backlogs, photographs, and other values visible in the
+  reference ERP were not fabricated because EKEEKRTA does not currently send
+  those records. The supplied student's photograph was not copied into the app.
+- The private token gate and server-side API authentication remain active. All
+  received values are rendered as text, and the layout adapts for smaller screens.
+- The visual layout was verified in the local browser at http://127.0.0.1:9000.
+  The ERP Sandbox is still local-only and has not been deployed publicly.
+
+-----------------------------------------------------------------------------
+32. ERP-OWNED STUDENT IMPORT — 6 SEPTEMBER 2026 (BUILT LOCALLY)
+-----------------------------------------------------------------------------
+- Corrected the student data direction: the ERP is now the source of truth for
+  student master records. The Sandbox includes an authenticated Add Student
+  page, and exposes those real ERP records to EKEEKRTA through a protected API.
+- EKEEKRTA Admin → ERP Integration now provides Import students. Students are
+  matched by official registration/roll number, new records become student
+  accounts, existing records are updated, and cross-institution records are
+  rejected. Missing departments from valid records are created automatically.
+- Imported students are automatically enrolled into matching compulsory cohort
+  courses. Their generated internal password is random and unknown; first login
+  is through the verified institution Google account, avoiding insecure default
+  passwords based on roll number or date of birth.
+- The integration is bidirectional by record ownership: students flow ERP →
+  EKEEKRTA, while courses and actual meeting attendance flow EKEEKRTA → ERP.
+  Student creation and profile edits are no longer pushed back to the ERP.
+- No sample student data is inserted. This change is built locally and is not
+  deployed publicly yet.
+- All 106 backend tests, all 4 ERP Sandbox tests, all 41 dashboard route checks,
+  the frontend production build, and the live local ERP page check pass.
+
+-----------------------------------------------------------------------------
+33. EKEEKRTA NATIVE AI COMMAND CENTRE — 10 SEPTEMBER 2026 (BUILT LOCALLY)
+-----------------------------------------------------------------------------
+- Added a dedicated AI Assistant page to student, faculty, HOD, and administrator
+  portals. It uses EKEEKRTA Native Intent Model v1 and sends no command or user
+  record to an external AI API or externally hosted model.
+- Implemented an EKEEKRTA-owned multinomial intent classifier trained from
+  locally maintained command phrases, plus deterministic extraction for course,
+  topic, marks, question count, date, time, and timezone fields.
+- Faculty can ask the assistant to schedule a course class, create an assignment,
+  prepare a quiz outline, or inspect permitted student progress. Administrators
+  can confirm ERP student import and inspect institution-scoped progress. HOD
+  results remain department-scoped; students can inspect only themselves.
+- Every data-changing command creates a readable preview first. The same tenant,
+  role, course, and student permissions are checked again at confirmation time.
+  Repeated confirmation is idempotent, and rejection does not change LMS data.
+- Quiz generation is intentionally a non-published builder outline: the system
+  does not invent questions, options, or correct answers. Faculty must enter and
+  verify this academic content before using the existing quiz publisher.
+- Progress insights are calculated only from real course enrolments, attendance,
+  assignment submissions/grades, quiz attempts, and programming submissions.
+  Empty values stay empty, and threshold findings explain their evidence.
+- Added institution-scoped action history, immutable audit records, secret-text
+  rejection, and opt-in correction records for future reviewed model training.
+  Voice control remains disabled until an EKEEKRTA-owned speech model exists.
+- Added seven native-AI security/behavior tests. The complete backend suite now
+  passes 114 tests and 92 subtests. The production frontend bundle and updated
+  dashboard checks also pass. This AI milestone is local and not deployed yet.
+
+-----------------------------------------------------------------------------
+34. ADMINISTRATOR MANUAL STUDENT REGISTRATION — 10 SEPTEMBER 2026 (BUILT LOCALLY)
+-----------------------------------------------------------------------------
+- Added Register student to the administrator sidebar and dashboard quick
+  actions. It opens a dedicated page rather than placing another form on the
+  main dashboard.
+- The administrator supplies the institution email, official registration/roll
+  number, department, program, batch, semester, section, and initial password.
+  Students still cannot self-register or select their own role.
+- Manual registration remains available when ERP student import is enabled. A
+  matching official registration/roll number lets a later ERP import update the
+  same profile; uniqueness checks prevent duplicate official IDs and emails.
+- Existing institution-domain, administrator-only, department, password, cohort,
+  and automatic compulsory-course enrollment rules remain enforced.
+- The complete backend suite passes 116 tests and 92 subtests. All 45 dashboard
+  route checks, the administrator registration browser flow, and the production
+  frontend build also pass. The updated local backend and frontend are running.
+
+-----------------------------------------------------------------------------
+35. NATIVE AI STAGE 2A — 10 SEPTEMBER 2026 (BUILT LOCALLY)
+-----------------------------------------------------------------------------
+- Expanded the EKEEKRTA-owned intent model with create_department,
+  create_course, and bulk_create_accounts. No external inference API or model
+  weights were introduced.
+- Administrators can create departments from reviewed prompts. Faculty can
+  create fully structured courses only in their own department; administrators
+  must identify an existing faculty member in the selected department.
+- Course prompts extract name, code, type, program, batch, semester, section,
+  enrollment mode, department, and faculty. Creation revalidates every field,
+  applies compulsory cohort enrollment, and queues the normal ERP course event.
+- Added a CSV bulk-account builder for up to 250 student/faculty records. Every
+  row is validated for institution domain, department, official ID, duplicates,
+  role, and required student cohort fields before confirmation becomes possible.
+- Bulk records never accept or store passwords. Created accounts use verified
+  institution Google sign-in, and the action history records only the reviewed
+  account data and validation result.
+- Added the administrator AI Review page. It shows up to 200 institution-scoped
+  actions with requester, intent, status, command, and time. Administrators can
+  reject pending actions but cannot confirm another user's request.
+- Tenant and role tests cover department/course creation, atomic bulk creation,
+  duplicate detection, review isolation, and administrator rejection. No sample
+  application records are created by the feature.
+- The complete backend suite passes 120 tests and 92 subtests. All 46 dashboard
+  route checks and the production frontend build pass.
+
+-----------------------------------------------------------------------------
+36. NATIVE AI STAGE 2B — 10 SEPTEMBER 2026 (BUILT LOCALLY)
+-----------------------------------------------------------------------------
+- Added a faculty Lesson-note Content Studio inside the existing AI Assistant.
+  It accepts a real faculty-owned course, topic, lesson notes, content type,
+  marks, optional due date, and requested quiz-question count.
+- Added the EKEEKRTA Local Content Draft Engine v1. It is deterministic, runs in
+  the EKEEKRTA backend, and calls no external model or AI inference API.
+- Assignment drafts derive learning goals, tasks, focus terms, and source
+  highlights from the supplied notes. Quiz drafts turn source statements into
+  MCQs and choose answers and distractors only from terms found in those notes.
+- Every preview identifies its local engine, grounding, source statement, and
+  answer key. If the notes cannot support the requested number of questions,
+  the interface reports the smaller grounded count rather than inventing facts.
+- Nothing is published when the draft is generated. Only the faculty member who
+  owns the course can confirm it; course access is checked again before storing
+  the assignment or quiz. Students cannot call the draft endpoint, and the
+  existing safe quiz response continues to omit correct answers.
+- Added backend tests for source grounding, no-publication-before-confirmation,
+  quiz publication, assignment publication, course ownership, student denial,
+  and weak-source rejection. Added frontend checks for the new faculty studio.
+- This milestone is built locally and has not been deployed publicly yet.
+
+-----------------------------------------------------------------------------
+37. ERP ROLE-BASED USER IMPORT — 10 SEPTEMBER 2026 (DEPLOYED)
+-----------------------------------------------------------------------------
+- Expanded ERP-owned identity import from students only to student, faculty,
+  and HOD records. The protected ERP contract now exposes
+  GET /api/ekeekrta/users with an explicit role on every record; the legacy
+  student-only endpoint remains available for older ERP adapters.
+- Added a mandatory administrator review flow. Preview ERP users reads the
+  current ERP directory and labels every record Create, Update, or Skip without
+  changing EKEEKRTA data. Confirm user import accepts only the signed preview
+  belonging to the same administrator and institution, and expires after
+  15 minutes.
+- Confirmation is rejected if the ERP export or EKEEKRTA account state changed
+  after preview. Administrator records, email-domain mismatches, duplicate IDs
+  or emails, conflicting email ownership, and attempts to change an existing
+  account role are skipped with a visible reason.
+- Students receive program, batch, semester, section, and matching compulsory
+  course enrollment. Faculty and HOD records receive their official employee
+  ID, department, and role. Passwords never cross the ERP boundary; imported
+  accounts use the verified institution Google sign-in flow.
+- The independent ERP Sandbox now includes Add User and User Directory views
+  for students, faculty, and HODs. Its historic student table is upgraded
+  additively with a role column so existing records are preserved.
+- The EKEEKRTA Native AI ERP command uses the same live preview and confirmation
+  safeguards and now describes role-based user import instead of student-only
+  import.
+- Verification passed: 126 backend tests plus 92 subtests, 5 ERP Sandbox tests,
+  all 47 dashboard route checks, and the frontend production build.
+- Deployed the tested frontend and backend to their existing production aliases:
+  https://smart-virtual-lms-frontend-ruby.vercel.app and
+  https://smart-virtual-lms-backend-gules.vercel.app.
+- Created the independent Vercel project ekeekrta-erp-sandbox and connected a
+  separate Neon Serverless Postgres resource named neon-beige-window. The public
+  ERP is available at https://ekeekrta-erp-sandbox.vercel.app.
+- The ERP token is stored as a protected Vercel secret and was not displayed or
+  committed. The ERP institution ID and name are stored as project configuration.
+- Public verification passed: frontend HTTP 200, backend status ok, ERP dashboard
+  HTTP 200, authenticated ERP health ok for HITAM, and unauthenticated ERP health
+  correctly rejected with HTTP 401. The deployment dependency omission found by
+  the first health check was fixed by adding email-validator and redeploying.
+- These deployment changes were uploaded directly with Vercel CLI; the current
+  local source changes have not yet been committed or pushed to GitHub.
+
+-----------------------------------------------------------------------------
+38. AI CGPA IMPROVEMENT PLANNER — STAGE 1 (BUILT LOCALLY)
+-----------------------------------------------------------------------------
+- A student can enter a target CGPA and the semester or graduation point by
+  which they want to reach it. Stage 1 uses the current CGPA, completed and
+  remaining credits, remaining semesters, grading-scale maximum, and weekly
+  study time entered from the student's latest official record.
+- The planner calculates the average SGPA/grade points required across the
+  remaining semesters. It will clearly identify targets that are achievable,
+  difficult, or mathematically impossible under the student-supplied grading
+  scale instead of making a guarantee.
+- Stage 1 provides semester projections and ranks the student's enrolled courses
+  using current attendance, missing assignments, assignment average, quiz
+  average, and programming-assessment average. It allocates the student's stated
+  weekly study time across up to six current courses without inventing marks.
+- The student receives subject priorities, recommended actions, weekly study
+  hours, and periodic CGPA checkpoints. Creating a new plan recalculates it from
+  the latest LMS evidence and the official values supplied by the student.
+- Stage 1 is student-only; faculty, HOD, and administrator accounts cannot call
+  the personal planning endpoint. Any future staff view must follow existing
+  course and department permissions and cannot alter a student's plan or record.
+- Stage 1 labels the entered CGPA and credit values as student-supplied planning
+  inputs and LMS performance as supporting evidence. Predicted results are
+  labelled as projections, and final CGPA continues to come from the institution
+  ERP or official academic record.
+- Added the student-only POST /ai/cgpa-plan endpoint and Target CGPA Planner in
+  the student AI Assistant. Every plan is private to the requesting student's
+  action history, institution-scoped, audited, and explicitly marked as a
+  projection that cannot alter official results.
+- Stage 2 remains planned: per-course credit configuration, grade-by-grade
+  what-if scenarios, configurable institution grading rules, saved goal
+  checkpoints, and automatic refresh from verified ERP result records.
+- Verification passed: all 132 backend tests, dashboard rendering checks, and
+  the production frontend build. This Stage 1 change is not publicly deployed.
+
+-----------------------------------------------------------------------------
+39. AI CGPA IMPROVEMENT PLANNER — STAGE 2 (DEPLOYED PUBLICLY)
+-----------------------------------------------------------------------------
+- Added persistent, private student CGPA goals. The latest inputs and up to 24
+  dated checkpoints are restored when the student returns to the AI Assistant.
+  Every checkpoint records its source as student entry or verified ERP refresh.
+- Added institution-owned grading rules. Administrators can set the official
+  CGPA scale maximum and passing grade point in Settings. The backend enforces
+  that scale even if a client attempts to submit a different value.
+- Added course-owned official credits. Faculty enter credits when creating an
+  academic course and can update credits inside the individual course workspace.
+  Existing courses are preserved; no course or enrolment is recreated.
+- Added per-course grade what-if simulation for the student's enrolled academic
+  courses. Only courses with configured credits can be selected. The result is
+  credit weighted, visibly labelled as a projection, and never changes a mark.
+  Unenrolled courses, missing credits, duplicate courses, values above the
+  institution scale, and scenario credits above the remaining total fail closed.
+- Added a protected ERP academic-result contract. The independent ERP Sandbox
+  now has an Academic Results screen and stores official CGPA, completed credits,
+  remaining credits, and the grading scale only after the student is registered
+  in the ERP. No sample results are generated.
+- A student with a saved goal and matching official institution ID can request a
+  verified ERP refresh. EKEEKRTA reads only that student's result, rejects scale
+  mismatches, recalculates the roadmap, saves an ERP-labelled checkpoint, and
+  records an audit event. It does not write grades back to either system.
+- Course credits are included in the normal outbound ERP course synchronization.
+  The additive compatibility upgrades preserve existing SQLite/PostgreSQL data.
+- Verification passed: all 134 EKEEKRTA backend tests, all 6 independent ERP
+  Sandbox tests, all dashboard rendering checks, the frontend production build,
+  Python compilation, and diff whitespace validation.
+- Deployed publicly on 11 September 2026 to the existing production projects:
+  https://ekeekrta.vercel.app,
+  https://smart-virtual-lms-backend-gules.vercel.app, and
+  https://ekeekrta-erp-sandbox.vercel.app.
+- Public verification passed: the EKEEKRTA login returned HTTP 200, backend
+  health returned HTTP 200 with service lms-backend, the ERP dashboard returned
+  HTTP 200 and contained Academic Results, and anonymous ERP health access was
+  correctly rejected with HTTP 401.
+
+-----------------------------------------------------------------------------
+40. NATIVE AI COURSE KNOWLEDGE AND LECTURE NOTES — PUBLIC RELEASE
+-----------------------------------------------------------------------------
+- Deployed the current frontend, backend, and independent ERP Sandbox to their
+  existing Vercel projects on 15 September 2026. The self-hosted Jitsi server
+  and any Docker deployment package were not published to Vercel.
+- Public application: https://ekeekrta.vercel.app/login
+  Public API: https://smart-virtual-lms-backend-gules.vercel.app/
+  Public ERP Sandbox: https://ekeekrta-erp-sandbox.vercel.app/
+- Stage 3 answers student questions only from faculty-approved, published
+  course text with citations. Stage 4 accepts faculty-provided, verified text
+  from a completed class, creates an extractive digest locally, and requires
+  faculty statement-by-statement review before publishing student notes.
+  Lecture-linked course sources cannot be changed from the generic source
+  controls. No external AI model or API is used in this text workflow.
+- Automatic meeting recording and speech-to-text are NOT available yet.
+  This release must not be described as an automatic lecture transcription
+  system; faculty must supply and confirm the actual transcript.
+- Verification: 137 EKEEKRTA backend tests, 6 ERP Sandbox tests, frontend
+  route/render checks, and the frontend production build passed. Public smoke
+  checks returned HTTP 200 for login, API health, and ERP dashboard. The new
+  lecture routes returned HTTP 401 to anonymous requests, the frontend origin
+  passed CORS preflight, and the ERP token-protected endpoint rejected an
+  anonymous request with HTTP 401. No real class or recording test was run.

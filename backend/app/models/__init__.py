@@ -8,3 +8,5 @@ from app.models.assignment import Assignment, Submission
 from app.models.quiz import Quiz, Question, QuizAttempt
 from app.models.material import StudyMaterial, MaterialType
 from app.models.programming import ProgrammingAssessment, ProgrammingTestCase, ProgrammingSubmission
+from app.models.erp import ERPIntegration, ERPSyncEvent
+from app.models.ai import AIAction, AIAuditLog, AITrainingExample, AICGPAGoal, AIKnowledgeSource, AILectureContent

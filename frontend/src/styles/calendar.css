@@ -8,10 +8,10 @@
 .calendar-dot { width: 10px; height: 10px; border-radius: 50%; background: #1d54c9; }
 .calendar-dot.class { background: #08765e; margin-left: 12px; }
 .calendar-layout { display: grid; grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr); gap: 24px; align-items: start; }
-.calendar-month, .calendar-agenda { background: #fff; border: 1px solid #dce1ec; border-radius: 16px; overflow: hidden; }
+.calendar-month, .calendar-agenda { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; overflow: hidden; }
 .calendar-weekdays, .calendar-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
 .calendar-weekdays { background: #f1f4fa; text-align: center; padding: 14px 0; font-size: .875rem; color: #566077; }
-.calendar-day { font: inherit; text-align: left; background: #fff; color: #16233b; border: 0; border-top: 1px solid #e3e8f0; border-right: 1px solid #e3e8f0; min-height: 120px; padding: 8px; min-width: 0; cursor: pointer; }
+.calendar-day { font: inherit; text-align: left; background: var(--surface); color: var(--ink); border: 0; border-top: 1px solid var(--border); border-right: 1px solid var(--border); min-height: 120px; padding: 8px; min-width: 0; cursor: pointer; }
 .calendar-day:nth-child(7n) { border-right: 0; }
 .calendar-day:disabled { background: #f7f8fb; color: #8b93a3; cursor: default; }
 .calendar-day.selected { box-shadow: inset 0 0 0 2px #1554ce; background: #f1f6ff; }

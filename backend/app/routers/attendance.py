@@ -15,7 +15,7 @@ from app.schemas.attendance import (
     FullscreenUpdate,
 )
 from app.core.deps import get_current_user, require_roles
-from app.integrations.erp_client import sync_attendance_to_erp
+from app.integrations.erp_client import enqueue_attendance_to_erp, sync_attendance_to_erp
 from app.config import settings
 from app.integrations.video import meeting_connection
 
@@ -172,7 +172,8 @@ def end_session(
     for record in open_records:
         student = db.query(User).filter(User.id == record.student_id).first()
         if student and course:
-            sync_attendance_to_erp(student.email, course.code, record.duration_minutes, record.present, institution_id=course.institution_id)
+            enqueue_attendance_to_erp(db, record, student, course, session, commit=False)
+    db.commit()
     return session
 
 
@@ -226,13 +227,7 @@ def record_session_event(
     student = db.query(User).filter(User.id == event.student_id).first()
     course = db.query(Course).filter(Course.id == event.course_id).first()
     if student and course:
-        sync_attendance_to_erp(
-            institution_id=course.institution_id,
-            student_email=student.email,
-            course_code=course.code,
-            duration_minutes=record.duration_minutes,
-            present=record.present,
-        )
+        sync_attendance_to_erp(db, record, student, course, session)
 
     return {"status": "recorded", "duration_minutes": record.duration_minutes, "present": record.present}
 

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, UniqueConstraint
+from sqlalchemy import Column, Float, Integer, String, ForeignKey, UniqueConstraint
 from app.database import Base
 
 
@@ -10,6 +10,9 @@ class Institution(Base):
     email_domain = Column(String(253), unique=True, nullable=False)
     logo_url = Column(String(2048), nullable=True)
     address = Column(String(500), nullable=True)
+    default_theme = Column(String(20), nullable=False, default="light", server_default="light")
+    grading_scale_max = Column(Float, nullable=False, default=10.0, server_default="10")
+    passing_grade_point = Column(Float, nullable=False, default=4.0, server_default="4")
 
 
 class Department(Base):

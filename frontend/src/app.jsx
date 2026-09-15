@@ -15,11 +15,19 @@ import SchedulePage from "./pages/SchedulePage";
 import FacultyCoursePage from "./pages/FacultyCoursePage";
 import StudentCoursePage from "./pages/StudentCoursePage";
 import ProgrammingAssessmentPage from "./pages/ProgrammingAssessmentPage";
+import AIAssistantPage from "./pages/AIAssistantPage";
+import AIReviewPage from "./pages/AIReviewPage";
+import ChangePasswordPage from "./pages/ChangePasswordPage";
+import SettingsPage from "./pages/SettingsPage";
+import { ThemeProvider } from "./context/ThemeContext";
 
 function DashboardRouter() {
   const { user } = useAuth();
   const { page = "dashboard" } = useParams();
   if (!isDashboardPage(user.role, page)) return <Navigate to={dashboardPath(user.role)} replace />;
+  if (page === "settings") return <SettingsPage />;
+  if (page === "ai-assistant") return <AIAssistantPage />;
+  if (page === "ai-review" && user.role === "admin") return <AIReviewPage />;
   if (page === "calendar" || (user.role === "student" && page === "timetable")) return <CalendarPage />;
   if (page === "schedule" && user.role === "faculty") return <SchedulePage />;
   if (user.role === "student") return <StudentDashboard />;
@@ -45,6 +53,10 @@ function AppRoutes() {
     );
   }
 
+  if (user.must_change_password) {
+    return <Routes><Route path="/change-password" element={<ChangePasswordPage />} /><Route path="*" element={<Navigate to="/change-password" replace />} /></Routes>;
+  }
+
   return (
     <Routes>
       {user.role === "faculty" && <Route path="/faculty/courses/:courseId" element={<FacultyCoursePage />} />}
@@ -62,10 +74,12 @@ function AppRoutes() {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <BrowserRouter>
-        <AppRoutes />
-      </BrowserRouter>
-    </AuthProvider>
+    <ThemeProvider>
+      <AuthProvider>
+        <BrowserRouter>
+          <AppRoutes />
+        </BrowserRouter>
+      </AuthProvider>
+    </ThemeProvider>
   );
 }

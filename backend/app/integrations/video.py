@@ -37,6 +37,8 @@ def meeting_connection(session, user, is_moderator: bool) -> dict:
         "room": session.jitsi_room_id,
         "context": {
             "room": {"regex": False},
+            # Keep the authenticated EKEEKRTA account identity stable across
+            # every class token. JaaS billing still identifies MAUs by device.
             "user": {"id": str(user.id), "name": user.name,
                      "moderator": "true" if is_moderator else "false"},
             "features": {name: False for name in (

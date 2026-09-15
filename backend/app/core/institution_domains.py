@@ -11,6 +11,8 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.models.institution import Institution
 
+PLATFORM_LOGIN_HOST = "ekeekrta.vercel.app"
+
 
 def configured_login_origins() -> list[str]:
     return [f"https://{host}" for host in settings.institution_login_hosts]
@@ -26,10 +28,14 @@ def request_login_host(request: Request) -> str | None:
             hostname = parsed.hostname or ""
         except ValueError:
             raise HTTPException(400, "Invalid login origin") from None
-        if hostname.startswith("ekeekrta."):
+        if hostname.startswith("ekeekrta.") and hostname != PLATFORM_LOGIN_HOST:
             if origin != f"https://{hostname}":
                 raise HTTPException(400, "Institution login requires its exact HTTPS origin")
             origin_host = hostname
+    # Older cached frontend bundles sent the platform hostname as if it were an
+    # institution domain. Treat only this exact public platform address as generic.
+    if header == PLATFORM_LOGIN_HOST:
+        header = None
     if origin_host and header is not None and header != origin_host:
         raise HTTPException(403, "Institution login address does not match")
     host = origin_host or header

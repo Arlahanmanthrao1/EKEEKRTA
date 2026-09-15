@@ -102,6 +102,16 @@ class JaaSTest(unittest.TestCase):
         with self.assertRaises(JWTError):
             jwt.decode(forged, self.public, algorithms=["RS256"], audience="jitsi")
 
+    def test_student_identity_is_stable_across_classes(self):
+        first = self.decode(self.connect())
+        self.db.add(ClassSession(id=2, course_id=1, jitsi_room_id="lms-secondroom"))
+        self.db.commit()
+        second = self.decode(self.connect(session_id=2))
+
+        self.assertNotEqual(first["room"], second["room"])
+        self.assertEqual(first["context"]["user"]["id"], "2")
+        self.assertEqual(second["context"]["user"]["id"], "2")
+
     def test_instructor_and_admin_moderate_same_room(self):
         student = self.connect().json()
         for user_id in [1, 5]:
