@@ -1063,8 +1063,8 @@ institution-only onboarding workflow is documented below.
   worker must own video storage and processing.
 - Automatic Jitsi recording, audio transcription with an EKEEKRTA-trained model,
   screen-share-specific extraction/OCR, retention automation, and real recording
-  playback are still NOT built. This change is local only and is not yet on
-  the public Vercel site or GitHub.
+  playback are still NOT built. The serverless-safe UI/API contract is public
+  and the source is on GitHub, but private media storage/processing remains local.
 - Verification: local tests simulate FFmpeg media output and verify private
   preparation and deletion. Frontend role/page rendering checks and the
   production build passed. No real recording file was processed.
@@ -1089,7 +1089,7 @@ institution-only onboarding workflow is documented below.
   transcribe speech, separate speakers, identify screen sharing, run OCR or
   generate notes from media. The serverless-safe status UI and API contract are
   public, but the private worker scripts, media and model runtime remain local
-  and were excluded from Vercel. These changes have not been pushed to GitHub.
+  and were excluded from Vercel. The reviewed source is pushed to GitHub.
 
 -----------------------------------------------------------------------------
 43. NATIVE AI STAGE 4 END-TO-END INTEGRATION CONTRACT — 16 SEPTEMBER 2026
@@ -1123,7 +1123,7 @@ institution-only onboarding workflow is documented below.
   Therefore a real automatic recording/transcription cannot honestly be marked
   operational. The serverless-safe application integration is deployed, but the
   self-hosted Jitsi/Jibri infrastructure and private model worker remain local.
-  These changes have not been pushed to GitHub.
+  The reviewed source and deployment instructions are pushed to GitHub.
 
 -----------------------------------------------------------------------------
 44. NATIVE AI STAGE 5 PROGRESS INTELLIGENCE — 16 SEPTEMBER 2026 (DEPLOYED)
@@ -1156,11 +1156,10 @@ institution-only onboarding workflow is documented below.
   https://ekeekrta.vercel.app. Public verification passed: backend health is OK,
   anonymous Stage 5 access is rejected with HTTP 401, the login and direct AI
   routes return HTTP 200, and the published JavaScript bundle contains the
-  Progress Intelligence workspace. The source changes remain uncommitted and
-  have not been pushed to GitHub.
+  Progress Intelligence workspace. The source is committed and pushed to GitHub.
 
 -----------------------------------------------------------------------------
-45. ACCOUNT ACCESS AND BULK-IMPORT UX — 16 SEPTEMBER 2026 (LOCAL)
+45. ACCOUNT ACCESS AND BULK-IMPORT UX — 16 SEPTEMBER 2026 (DEPLOYED)
 -----------------------------------------------------------------------------
 - The administrator Bulk Account Builder now downloads a header-only CSV
   template for student/faculty import. It contains no fabricated user records.
@@ -1176,4 +1175,6 @@ institution-only onboarding workflow is documented below.
   JavaScript origins; it never creates users or assigns roles automatically.
 - Verification passed: production frontend build, isolated dashboard rendering,
   password/Google authentication tests, and the full 145-test backend suite.
-  This update has not yet been deployed or pushed to GitHub.
+  Backend health, login/recovery routes and published UI bundle checks passed on
+  Vercel. The source is committed and pushed to GitHub. SMTP and Google OAuth
+  remain disabled until their real environment values are configured.
