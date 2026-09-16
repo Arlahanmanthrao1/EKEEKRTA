@@ -97,6 +97,7 @@ class JaaSTest(unittest.TestCase):
         self.assertEqual(data["room_name"], "vpaas-magic-cookie-test/lms-testroom")
         self.assertEqual(data["script_url"], "https://8x8.vc/vpaas-magic-cookie-test/external_api.js")
         self.assertEqual(jwt.get_unverified_header(data["jwt"])["kid"], settings.jaas_api_key_id)
+        self.assertEqual(data["recording"], {"available": False, "auto_start": False, "mode": "file"})
         # Changing a signed claim must invalidate the token.
         forged = jwt.encode({**claims, "room": "other-room"}, "wrong-secret", algorithm="HS256")
         with self.assertRaises(JWTError):
@@ -149,12 +150,24 @@ class JaaSTest(unittest.TestCase):
         self.assertEqual(self.connect().status_code, 503)
 
     def test_explicit_public_or_college_server_mode(self):
-        with patch.object(settings, "video_provider", "jitsi"), patch.object(settings, "jitsi_domain", "meet.college.example"):
+        with patch.object(settings, "video_provider", "jitsi"), patch.object(settings, "jitsi_domain", "meet.college.example"), patch.object(settings, "jitsi_auto_recording_enabled", True), patch.object(settings, "jitsi_jwt_app_id", "ekeekrta"), patch.object(settings, "jitsi_jwt_app_secret", SecretStr("test-jitsi-secret")):
             response = self.connect()
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.json()["domain"], "meet.college.example")
-            self.assertIsNone(response.json()["jwt"])
+            student_claims = jwt.decode(response.json()["jwt"], "test-jitsi-secret",
+                                        algorithms=["HS256"], audience="ekeekrta")
+            self.assertEqual(student_claims["context"]["user"]["moderator"], "false")
+            self.assertEqual(student_claims["context"]["user"]["affiliation"], "member")
+            self.assertFalse(response.json()["recording"]["auto_start"])
+            faculty = self.connect(1).json()
+            self.assertTrue(faculty["recording"]["auto_start"])
+            faculty_claims = jwt.decode(faculty["jwt"], "test-jitsi-secret",
+                                        algorithms=["HS256"], audience="ekeekrta")
+            self.assertEqual(faculty_claims["context"]["user"]["moderator"], "true")
+            self.assertEqual(faculty_claims["context"]["user"]["affiliation"], "owner")
             self.assertEqual(self.connect(3).status_code, 403)
+        with patch.object(settings, "video_provider", "jitsi"), patch.object(settings, "jitsi_domain", "meet.college.example"), patch.object(settings, "jitsi_jwt_app_id", ""), patch.object(settings, "jitsi_jwt_app_secret", SecretStr("")):
+            self.assertEqual(self.connect().status_code, 503)
         self.read_key.assert_not_called()
 
     def test_cloud_secret_key_without_local_file(self):

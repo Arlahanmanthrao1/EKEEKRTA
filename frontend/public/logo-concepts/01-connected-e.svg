@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 160" role="img" aria-labelledby="title desc">
+  <title id="title">EKEEKRTA connected E logo concept</title>
+  <desc id="desc">Three learning connections form the letter E beside the EKEEKRTA wordmark.</desc>
+  <rect x="16" y="16" width="128" height="128" rx="30" fill="#142b50"/>
+  <path d="M55 46v68" fill="none" stroke="#fff" stroke-width="12" stroke-linecap="round"/>
+  <path d="M55 47h50M55 80h42M55 113h50" fill="none" stroke="#fff" stroke-width="12" stroke-linecap="round"/>
+  <circle cx="108" cy="47" r="9" fill="#68e7bf"/>
+  <circle cx="100" cy="80" r="9" fill="#68e7bf"/>
+  <circle cx="108" cy="113" r="9" fill="#ff8a78"/>
+  <text x="174" y="98" fill="#142b50" font-family="IBM Plex Sans, Segoe UI, sans-serif" font-size="55" font-weight="700" letter-spacing="3">EKEEKRTA</text>
+  <text x="177" y="125" fill="#52617a" font-family="IBM Plex Sans, Segoe UI, sans-serif" font-size="16" letter-spacing="1.2">ONE PLATFORM · EVERY LEARNING CONNECTION</text>
+</svg>

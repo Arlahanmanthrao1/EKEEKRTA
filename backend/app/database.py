@@ -46,6 +46,7 @@ def ensure_schema_compatibility():
             "institutional_id": "VARCHAR(120)",
             "must_change_password": "BOOLEAN NOT NULL DEFAULT FALSE",
             "erp_password_initialized": "BOOLEAN NOT NULL DEFAULT FALSE",
+            "session_version": "INTEGER NOT NULL DEFAULT 0",
         },
         "courses": {
             "course_type": "VARCHAR NOT NULL DEFAULT 'academic'", "program": "VARCHAR", "batch": "VARCHAR",

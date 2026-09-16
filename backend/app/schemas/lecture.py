@@ -42,3 +42,40 @@ class LectureReviewIn(BaseModel):
 
     included_statement_numbers: list[int] = Field(min_length=1, max_length=6)
     included_topics: list[str] = Field(default_factory=list, max_length=8)
+
+
+class LectureRecordingOut(BaseModel):
+    id: int
+    course_id: int
+    session_id: int
+    original_filename: str
+    content_type: str
+    size_bytes: int
+    status: str
+    notes_status: str | None = None
+    preparation: "LectureRecordingPreparationOut | None" = None
+    created_at: datetime
+
+
+class LectureRecordingPreparationOut(BaseModel):
+    id: int
+    recording_id: int
+    status: str
+    stage: str
+    attempts: int
+    error_code: str | None = None
+    requested_at: datetime
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+
+
+class LectureRecordingCapabilitiesOut(BaseModel):
+    local_upload_available: bool
+    preparation_queue_available: bool
+    maximum_upload_mb: int
+    automatic_recording_available: bool = False
+    automatic_transcription_available: bool = False
+    slide_ocr_available: bool = False
+
+
+LectureRecordingOut.model_rebuild()

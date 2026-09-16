@@ -67,6 +67,7 @@ export default function Login() {
           <form onSubmit={handleSubmit} className="login-form">
             <label className="field-label">Institution email<input className="field" type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder={institution ? `you@${institution.email_domain}` : "you@institution.edu"} required autoComplete="email" /></label>
             <label className="field-label">Password<input className="field" type="password" value={password} onChange={(event) => setPassword(event.target.value)} required autoComplete="current-password" /></label>
+            <Link className="forgot-password-link" to="/forgot-password">Forgot password?</Link>
             {error && <p className="error-banner">{error}</p>}
             <button type="submit" disabled={submitting} className="btn btn-primary">{submitting ? "Signing in…" : "Sign in"}</button>
           </form>

@@ -302,6 +302,7 @@ textarea.field { min-height: 100px; resize: vertical; }
 .classroom-shell:fullscreen { width: 100%; height: 100%; max-width: none; max-height: none; margin: 0; padding: 0; border: 0; border-radius: 0; box-shadow: none; }
 .classroom-status { position: absolute; z-index: 3; left: 14px; bottom: 14px; padding: 6px 11px; border-radius: 99px; color: #fff; background: rgba(9,17,30,.86); font-size: 11px; pointer-events: none; }
 .classroom-controls { position: absolute; z-index: 4; top: 12px; right: 12px; display: flex; gap: 8px; }
+.classroom-recording-status { align-self: center; padding: 7px 10px; border-radius: 99px; color: #fff; background: rgba(9,17,30,.9); font-size: 11px; text-transform: capitalize; }
 .classroom-control { padding: 9px 13px; border: 1px solid rgba(255,255,255,.32); border-radius: 8px; color: #fff; background: rgba(7,87,199,.95); cursor: pointer; font-size: 12px; font-weight: 600; }
 .classroom-control:disabled { opacity: .6; cursor: default; }
 .classroom-end { background: rgba(191,34,44,.96); }
@@ -334,6 +335,13 @@ textarea.field { min-height: 100px; resize: vertical; }
 .login-form { display: grid; gap: 16px; }
 .login-form .field { width: 100%; min-height: 48px; }
 .login-form .btn { min-height: 48px; margin-top: 4px; }
+.forgot-password-link { justify-self: end; margin-top: -8px; color: var(--blue); font-size: 14px; font-weight: 650; }
+.auth-page { min-height: 100vh; display: grid; place-items: center; padding: 28px; background: radial-gradient(circle at top left, color-mix(in srgb, var(--blue) 13%, transparent), transparent 42%), var(--canvas); }
+.auth-card { width: min(480px, 100%); padding: 34px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-lg); }
+.auth-card h1 { margin: 10px 0 8px; font-size: clamp(28px, 5vw, 38px); }
+.auth-card > p:not(.section-eyebrow, .error-banner, .success-banner, .notice-banner) { color: var(--ink-muted); line-height: 1.6; }
+.auth-back-link { display: inline-block; margin-top: 22px; color: var(--blue); font-weight: 650; }
+.panel-title-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }
 .auth-switch { margin: 22px 0 0 !important; color: var(--ink-muted); font-size: 14px; text-align: center; }
 
 @media (max-width: 1100px) {
@@ -416,6 +424,45 @@ textarea.field { min-height: 100px; resize: vertical; }
 .ai-hero h2 { margin: 3px 0 5px; font-size: clamp(24px, 3vw, 34px); }
 .ai-hero p { margin: 0; color: var(--ink-muted); }
 .ai-engine-badge { position: relative; z-index: 1; padding: 9px 12px; border: 1px solid var(--border-strong); border-radius: 999px; color: var(--blue); background: var(--surface); font-size: 12px; font-weight: 600; }
+.ai-progress-panel { margin: 0 0 22px; padding: 22px; }
+.ai-progress-panel > p { max-width: 900px; color: var(--ink-muted); line-height: 1.55; }
+.ai-progress-course { display: grid; gap: 7px; max-width: 520px; margin: 18px 0; }
+.ai-progress-loading { padding: 22px; border: 1px dashed var(--border-strong); border-radius: 10px; color: var(--ink-muted); text-align: center; }
+.ai-progress-summary { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; margin: 18px 0; }
+.ai-progress-summary > div { padding: 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-subtle); }
+.ai-progress-summary small { display: block; color: var(--ink-muted); }
+.ai-progress-summary strong { display: block; margin-top: 6px; font-size: 24px; }
+.ai-progress-summary .risk-critical strong, .pill-risk-critical { color: var(--coral); }
+.ai-progress-summary .risk-high strong, .pill-risk-high { color: var(--amber); }
+.ai-progress-summary .risk-watch strong, .pill-risk-watch { color: var(--purple); }
+.ai-progress-summary .risk-stable strong, .pill-risk-stable { color: var(--mint-dark); }
+.pill-risk-insufficient_data { color: var(--ink-muted); }
+.pill-risk-critical { background: var(--coral-soft); }
+.pill-risk-high { background: var(--amber-soft); }
+.pill-risk-watch { background: var(--purple-soft); }
+.pill-risk-stable { background: var(--mint-soft); }
+.pill-risk-insufficient_data { background: var(--surface-soft); }
+.ai-progress-list { display: grid; gap: 10px; }
+.ai-progress-student { border: 1px solid var(--border); border-left-width: 4px; border-radius: 11px; background: var(--surface-subtle); overflow: hidden; }
+.ai-progress-student.risk-critical { border-left-color: var(--coral); }
+.ai-progress-student.risk-high { border-left-color: var(--amber); }
+.ai-progress-student.risk-watch { border-left-color: var(--purple); }
+.ai-progress-student.risk-stable { border-left-color: var(--mint-dark); }
+.ai-progress-student.risk-insufficient_data { border-left-color: var(--border-strong); }
+.ai-progress-student > summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 15px 17px; cursor: pointer; list-style-position: inside; }
+.ai-progress-student > summary > div { display: inline-flex; flex-direction: column; gap: 3px; margin-right: auto; }
+.ai-progress-student > summary span:not(.pill) { color: var(--ink-muted); font-size: 12px; }
+.ai-progress-student-body { padding: 0 17px 17px; border-top: 1px solid var(--border); }
+.ai-progress-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 16px 0; }
+.ai-progress-metrics > div { display: grid; gap: 5px; padding: 13px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); }
+.ai-progress-metrics small, .ai-progress-metrics span { color: var(--ink-muted); font-size: 12px; }
+.ai-progress-metrics strong { font-size: 20px; }
+.ai-progress-guidance { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 16px 0; }
+.ai-progress-guidance > div { padding: 14px; border-radius: 10px; background: var(--surface-soft); }
+.ai-progress-guidance h3 { margin: 0 0 8px; font-size: 14px; }
+.ai-progress-guidance ul, .ai-progress-guidance ol { margin: 0; padding-left: 19px; }
+.ai-progress-guidance li { margin: 6px 0; color: var(--ink-muted); font-size: 13px; line-height: 1.45; }
+.ai-progress-course-table td { white-space: normal; }
 .ai-composer { padding: 22px; }
 .ai-composer > label { display: block; margin-bottom: 9px; font-weight: 600; }
 .ai-composer textarea { width: 100%; resize: vertical; min-height: 112px; padding: 14px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--surface); color: var(--ink); line-height: 1.55; }
@@ -552,4 +599,7 @@ textarea.field { min-height: 100px; resize: vertical; }
   .ai-cgpa-form, .cgpa-metrics, .cgpa-plan-grid, .cgpa-scenario-fields { grid-template-columns: 1fr; }
   .cgpa-saved-goal { align-items: stretch; flex-direction: column; }
   .cgpa-course-list article > div { flex-direction: column; }
+  .ai-progress-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ai-progress-metrics, .ai-progress-guidance { grid-template-columns: 1fr; }
+  .ai-progress-student > summary { align-items: flex-start; flex-direction: column; }
 }

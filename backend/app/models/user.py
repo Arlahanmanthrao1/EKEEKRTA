@@ -25,6 +25,7 @@ class User(Base):
     hashed_password = Column(String, nullable=False)
     must_change_password = Column(Boolean, nullable=False, default=False, server_default="false")
     erp_password_initialized = Column(Boolean, nullable=False, default=False, server_default="false")
+    session_version = Column(Integer, nullable=False, default=0, server_default="0")
     role = Column(Enum(UserRole), nullable=False, default=UserRole.student)
     department = Column(String, nullable=True)
     program = Column(String, nullable=True)

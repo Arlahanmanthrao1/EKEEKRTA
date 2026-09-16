@@ -6,6 +6,7 @@
 *.pem
 *.key
 secrets/
+private-recordings/
 .venv/
 venv/
 __pycache__/

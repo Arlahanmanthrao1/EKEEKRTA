@@ -30,6 +30,8 @@ def get_authenticated_user(request: Request, token: str = Depends(oauth2_scheme)
     user = db.query(User).filter(User.id == int(user_id)).first()
     if user is None:
         raise credentials_exception
+    if int(payload.get("session_version", 0)) != int(user.session_version or 0):
+        raise credentials_exception
     tenant(user)
     host = request_login_host(request)
     if payload.get("login_host") and payload["login_host"] != host:

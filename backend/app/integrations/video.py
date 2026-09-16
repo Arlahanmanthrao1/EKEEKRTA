@@ -14,9 +14,25 @@ def meeting_connection(session, user, is_moderator: bool) -> dict:
         domain = settings.jitsi_domain.strip()
         if not re.fullmatch(r"[a-zA-Z0-9.-]+(?::[0-9]+)?", domain):
             raise HTTPException(503, "JITSI_DOMAIN must be a hostname, without https:// or a path.")
+        app_id = settings.jitsi_jwt_app_id.strip()
+        secret = settings.jitsi_jwt_app_secret.get_secret_value()
+        if not app_id or not secret:
+            raise HTTPException(503, "Self-hosted Jitsi requires JITSI_JWT_APP_ID and JITSI_JWT_APP_SECRET; anonymous fallback is disabled.")
+        now = int(time.time())
+        expires_at = now + settings.jitsi_jwt_expire_minutes * 60
+        claims = {"aud": app_id, "iss": app_id, "sub": domain,
+                  "iat": now, "nbf": now - 30, "exp": expires_at,
+                  "room": session.jitsi_room_id,
+                  "context": {"user": {"id": str(user.id), "name": user.name,
+                                         "affiliation": "owner" if is_moderator else "member",
+                                         "moderator": "true" if is_moderator else "false"}}}
+        token = jwt.encode(claims, secret, algorithm="HS256")
         return dict(provider="jitsi", domain=domain,
                     script_url=f"https://{domain}/external_api.js",
-                    room_name=session.jitsi_room_id, jwt=None, expires_at=None)
+                    room_name=session.jitsi_room_id, jwt=token, expires_at=expires_at,
+                    recording={"available": settings.jitsi_auto_recording_enabled,
+                               "auto_start": settings.jitsi_auto_recording_enabled and is_moderator,
+                               "mode": "file"})
 
     app_id = settings.jaas_app_id.strip()
     key_id = settings.jaas_api_key_id.strip()
@@ -56,4 +72,5 @@ def meeting_connection(session, user, is_moderator: bool) -> dict:
     return dict(provider="jaas", domain="8x8.vc",
                 script_url=f"https://8x8.vc/{app_id}/external_api.js",
                 room_name=f"{app_id}/{session.jitsi_room_id}",
-                jwt=token, expires_at=expires_at)
+                jwt=token, expires_at=expires_at,
+                recording={"available": False, "auto_start": False, "mode": "file"})

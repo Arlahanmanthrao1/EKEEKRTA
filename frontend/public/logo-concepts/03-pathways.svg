@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 160" role="img" aria-labelledby="title desc">
+  <title id="title">EKEEKRTA pathways logo concept</title>
+  <desc id="desc">Three separate learning paths join a central E-shaped hub.</desc>
+  <rect x="20" y="20" width="120" height="120" rx="28" fill="#eef8fa"/>
+  <path d="M47 48h32v64H47" fill="none" stroke="#142b50" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M79 48h34M79 80h27M79 112h34" fill="none" stroke="#0c62bf" stroke-width="11" stroke-linecap="round"/>
+  <path d="M112 43l10 5-10 5M105 75l10 5-10 5M112 107l10 5-10 5" fill="none" stroke="#21b798" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="79" cy="80" r="6" fill="#ff8a78"/>
+  <text x="172" y="98" fill="#142b50" font-family="IBM Plex Sans, Segoe UI, sans-serif" font-size="55" font-weight="700" letter-spacing="2.5">EKEEKRTA</text>
+  <text x="175" y="126" fill="#52617a" font-family="IBM Plex Sans, Segoe UI, sans-serif" font-size="16" letter-spacing="1">A UNIFIED SPACE FOR LEARNING</text>
+</svg>

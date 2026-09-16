@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, func
+from sqlalchemy import BigInteger, Boolean, Column, DateTime, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, func
 
 from app.database import Base
 
@@ -105,4 +105,48 @@ class AILectureContent(Base):
     status = Column(String(20), nullable=False, default="draft", server_default="draft")
     knowledge_source_id = Column(Integer, ForeignKey("ai_knowledge_sources.id"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class AILectureRecording(Base):
+    """Private local recording intake; media is never served by the public API."""
+
+    __tablename__ = "ai_lecture_recordings"
+    __table_args__ = (UniqueConstraint("session_id", name="uq_ai_lecture_recording_session"),)
+
+    id = Column(Integer, primary_key=True)
+    institution_id = Column(Integer, ForeignKey("institutions.id"), nullable=False, index=True)
+    course_id = Column(Integer, ForeignKey("courses.id"), nullable=False, index=True)
+    session_id = Column(Integer, ForeignKey("class_sessions.id"), nullable=False, index=True)
+    uploaded_by = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    original_filename = Column(String(180), nullable=False)
+    content_type = Column(String(40), nullable=False)
+    storage_key = Column(String(80), nullable=False, unique=True)
+    size_bytes = Column(BigInteger, nullable=False)
+    sha256 = Column(String(64), nullable=False)
+    status = Column(String(24), nullable=False, default="uploaded", server_default="uploaded")
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    deleted_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class AILecturePreparationJob(Base):
+    """Audited private-worker request; it never contains raw media or transcripts."""
+
+    __tablename__ = "ai_lecture_preparation_jobs"
+    __table_args__ = (UniqueConstraint("recording_id", name="uq_ai_lecture_preparation_recording"),)
+
+    id = Column(Integer, primary_key=True)
+    institution_id = Column(Integer, ForeignKey("institutions.id"), nullable=False, index=True)
+    course_id = Column(Integer, ForeignKey("courses.id"), nullable=False, index=True)
+    recording_id = Column(Integer, ForeignKey("ai_lecture_recordings.id"), nullable=False, index=True)
+    requested_by = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    status = Column(String(24), nullable=False, default="queued", server_default="queued", index=True)
+    stage = Column(String(40), nullable=False, default="awaiting_private_worker",
+                   server_default="awaiting_private_worker")
+    attempts = Column(Integer, nullable=False, default=0, server_default="0")
+    result = Column(JSON, nullable=True)
+    error_code = Column(String(50), nullable=True)
+    requested_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    finished_at = Column(DateTime(timezone=True), nullable=True)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)

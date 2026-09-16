@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 
 class Token(BaseModel):
@@ -19,6 +19,24 @@ class PasswordChange(BaseModel):
     new_password: str = Field(min_length=8, max_length=128)
 
     @field_validator("current_password", "new_password")
+    @classmethod
+    def password_must_fit_bcrypt(cls, value: str) -> str:
+        if len(value.encode("utf-8")) > 72:
+            raise ValueError("Password must fit within 72 UTF-8 bytes")
+        return value
+
+
+class ForgotPassword(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    email: EmailStr
+
+
+class PasswordReset(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    token: str = Field(min_length=32, max_length=256, pattern=r"^[A-Za-z0-9_-]+$")
+    new_password: str = Field(min_length=12, max_length=128)
+
+    @field_validator("new_password")
     @classmethod
     def password_must_fit_bcrypt(cls, value: str) -> str:
         if len(value.encode("utf-8")) > 72:

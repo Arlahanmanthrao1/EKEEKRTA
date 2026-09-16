@@ -1,5 +1,9 @@
 """Native AI tests use only disposable in-memory records and no external model/API."""
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from tempfile import TemporaryDirectory
+import hashlib
+import json
 import unittest
 from unittest.mock import patch
 
@@ -15,10 +19,17 @@ from app.core.secret_box import encrypt_secret
 from app.database import Base, get_db
 from app.models import (Assignment, Attendance, ClassSession, Course, Enrollment, Question, Quiz, QuizAttempt,
                         ScheduledClass, Submission, User, UserRole)
-from app.models.ai import AIAction, AIAuditLog, AICGPAGoal, AIKnowledgeSource, AILectureContent, AITrainingExample
+from app.models.ai import (AIAction, AIAuditLog, AICGPAGoal, AIKnowledgeSource,
+                           AILectureContent, AILecturePreparationJob,
+                           AILectureRecording, AITrainingExample)
 from app.models.erp import ERPIntegration
 from app.models.institution import Department, Institution
 from app.native_ai.intent_model import model
+from app.native_ai.model_runtime import run_slide_ocr, run_speech_model
+from app.native_ai.recording_ingest import ingest_jibri_recording
+from app.native_ai.recording_retention import purge_expired_recordings
+from app.native_ai.recording_worker import process_next_recording_job
+from app.config import settings
 from app.routers import ai, lectures
 
 
@@ -306,6 +317,225 @@ class NativeAITest(unittest.TestCase):
         self.assertEqual(self.request("GET", "/ai/lectures/course/1", user=3).json(), [])
         self.assertFalse(self.db.query(AIKnowledgeSource).one().is_published)
 
+    def test_private_local_recording_intake_is_scoped_and_never_claims_transcription(self):
+        self.db.add_all([ClassSession(id=44, course_id=1, jitsi_room_id="recording-ended",
+                                      ended_at=datetime.now(timezone.utc)),
+                         ClassSession(id=45, course_id=1, jitsi_room_id="recording-active")])
+        self.db.commit()
+        media = b"\x00\x00\x00\x18ftypisom" + b"\x00" * 2048
+        upload = {"files": {"file": ("class.mp4", media, "video/mp4")},
+                  "data": {"permissions_confirmed": "true"}}
+        with TemporaryDirectory() as folder, patch("app.routers.lectures._recording_root", return_value=Path(folder)):
+            self.assertEqual(self.request("GET", "/ai/lectures/recording-capabilities", user=3).status_code, 403)
+            capabilities = self.request("GET", "/ai/lectures/recording-capabilities").json()
+            self.assertTrue(capabilities["local_upload_available"])
+            self.assertFalse(capabilities["automatic_recording_available"])
+            self.assertFalse(capabilities["automatic_transcription_available"])
+            self.assertEqual(self.request("POST", "/ai/lectures/sessions/44/recording",
+                                          files=upload["files"], data={"permissions_confirmed": "false"}).status_code, 422)
+            self.assertEqual(self.request("POST", "/ai/lectures/sessions/45/recording", **upload).status_code, 409)
+            self.assertEqual(self.request("POST", "/ai/lectures/sessions/44/recording", user=2, **upload).status_code, 403)
+            self.assertEqual(self.request("POST", "/ai/lectures/sessions/44/recording", user=3, **upload).status_code, 403)
+            self.assertEqual(self.request("POST", "/ai/lectures/sessions/44/recording",
+                                          files={"file": ("fake.mp4", b"not a video", "video/mp4")},
+                                          data={"permissions_confirmed": "true"}).status_code, 422)
+            self.assertEqual(list(Path(folder).iterdir()), [])
+            with patch.dict("os.environ", {"VERCEL": "1"}):
+                self.assertEqual(self.request("POST", "/ai/lectures/sessions/44/recording", **upload).status_code, 503)
+            uploaded = self.request("POST", "/ai/lectures/sessions/44/recording", **upload)
+            self.assertEqual(uploaded.status_code, 201, uploaded.text)
+            self.assertEqual(uploaded.json()["notes_status"], None)
+            self.assertEqual(uploaded.json()["status"], "uploaded")
+            self.assertEqual(len(list(Path(folder).iterdir())), 1)
+            recording_id = uploaded.json()["id"]
+            saved_file = next(Path(folder).glob("*.mp4"))
+            saved_file.write_bytes(media[:-1] + b"x")
+            with patch.object(settings, "recording_storage_dir", folder), patch(
+                "app.native_ai.recording_media.shutil.which", return_value="ffmpeg-test"
+            ):
+                queued = self.request("POST", f"/ai/lectures/recordings/{recording_id}/prepare")
+                self.assertEqual(queued.status_code, 200, queued.text)
+                self.assertEqual(queued.json()["status"], "queued")
+                self.assertEqual(self.request("POST", f"/ai/lectures/recordings/{recording_id}/prepare").json()["id"], queued.json()["id"])
+                failed = process_next_recording_job(self.db, 1, runner=lambda *_args, **_options: None)
+            self.assertEqual(failed["status"], "failed")
+            self.assertEqual(failed["error_code"], "recording_integrity_failed")
+            self.assertEqual(self.db.query(AILectureRecording).one().status, "preparation_failed")
+            saved_file.write_bytes(media)
+            def fake_ffmpeg(arguments, **_options):
+                output = Path(arguments[-1])
+                if output.name == "%06d.jpg":
+                    (output.parent / "000001.jpg").write_bytes(b"frame")
+                else:
+                    output.write_bytes(b"RIFFtest-audio")
+            with patch.object(settings, "recording_storage_dir", folder), patch(
+                "app.native_ai.recording_media.shutil.which", return_value="ffmpeg-test"
+            ):
+                retried = self.request("POST", f"/ai/lectures/recordings/{recording_id}/prepare")
+                self.assertEqual(retried.json()["status"], "queued")
+                prepared = process_next_recording_job(self.db, 1, runner=fake_ffmpeg)
+            self.assertEqual(prepared["status"], "completed", prepared)
+            self.assertEqual(prepared["result"]["sampled_frame_count"], 1)
+            self.assertFalse(prepared["result"]["transcript_created"])
+            self.assertFalse(prepared["result"]["notes_created"])
+            self.assertEqual(self.db.query(AILectureRecording).one().status, "media_prepared")
+            self.assertEqual(len(list((Path(folder) / "derived").glob("*/audio.wav"))), 1)
+            self.assertEqual(self.request("POST", f"/ai/lectures/recordings/{recording_id}/prepare").status_code, 409)
+            self.assertEqual(self.request("GET", "/ai/lectures/recordings/course/1", user=3).status_code, 403)
+            self.assertEqual(self.request("GET", "/ai/lectures/recordings/course/1", user=2).status_code, 403)
+            self.assertEqual(self.request("GET", "/ai/lectures/recordings/course/1", user=6).status_code, 404)
+            self.assertEqual(len(self.request("GET", "/ai/lectures/recordings/course/1").json()), 1)
+            self.assertEqual(self.request("POST", "/ai/lectures/sessions/44/recording", **upload).status_code, 409)
+            transcript = ("The professor explains cloud load balancing across server nodes. "
+                          "Round robin assigns client requests in a repeating order. "
+                          "Health checks stop traffic to an unavailable service. "
+                          "The class compares cloud routing choices using these examples. ")
+            notes = self.request("POST", "/ai/lectures/sessions/44/transcript",
+                                 json={"transcript": transcript, "permissions_confirmed": True})
+            self.assertEqual(notes.status_code, 201, notes.text)
+            self.assertEqual(self.request("GET", "/ai/lectures/recordings/course/1").json()[0]["notes_status"], "draft")
+            self.assertEqual(self.request("DELETE", f"/ai/lectures/recordings/{recording_id}", user=3).status_code, 403)
+            with patch.dict("os.environ", {"VERCEL": "1"}):
+                self.assertEqual(self.request("POST", f"/ai/lectures/recordings/{recording_id}/prepare").status_code, 503)
+                self.assertEqual(self.request("DELETE", f"/ai/lectures/recordings/{recording_id}").status_code, 503)
+            self.assertEqual(self.request("DELETE", f"/ai/lectures/recordings/{recording_id}").status_code, 204)
+            self.assertEqual(list(Path(folder).glob("*.mp4")), [])
+            self.assertEqual(list((Path(folder) / "derived").glob("*/audio.wav")), [])
+            self.assertEqual(self.request("GET", "/ai/lectures/recordings/course/1").json(), [])
+            self.assertEqual(self.db.query(AILectureRecording).one().status, "deleted")
+            self.assertEqual(self.request("GET", "/ai/lectures/course/1").json()[0]["status"], "draft")
+
+    def test_private_model_contract_validates_speech_and_slide_output(self):
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            executable = root / "ekeekrta-model.exe"
+            executable.write_bytes(b"private-test-binary")
+            audio = root / "audio.wav"
+            audio.write_bytes(b"RIFF-private-test")
+            frames = root / "frames"
+            frames.mkdir()
+
+            def speech_runner(arguments, **options):
+                self.assertFalse(options["shell"])
+                Path(arguments[-1]).write_text(json.dumps({
+                    "schema_version": 1, "language": "en",
+                    "segments": [
+                        {"start_ms": 0, "end_ms": 12000, "speaker": "Faculty",
+                         "confidence": 0.93, "text": "Load balancing distributes requests across healthy servers so one machine does not receive every request."},
+                        {"start_ms": 12000, "end_ms": 25000, "speaker": "Faculty",
+                         "confidence": 0.91, "text": "Health checks remove unavailable servers from routing until those servers recover and pass validation again."},
+                    ]}), encoding="utf-8")
+
+            speech = run_speech_model(audio, str(executable), "ekeekrta-stt-test-v1", 30, speech_runner)
+            self.assertEqual(speech["segment_count"], 2)
+            self.assertIn("Faculty", speech["transcript"])
+            self.assertEqual(list(root.glob(".speech-*.json")), [])
+
+            def slide_runner(arguments, **options):
+                self.assertFalse(options["shell"])
+                Path(arguments[-1]).write_text(json.dumps({
+                    "schema_version": 1,
+                    "slides": [{"timestamp_ms": 30000, "confidence": 0.88,
+                                "text": "Application Load Balancer health-check workflow"}],
+                }), encoding="utf-8")
+
+            slides = run_slide_ocr(frames, str(executable), "ekeekrta-ocr-test-v1", 30, slide_runner)
+            self.assertEqual(slides["slide_count"], 1)
+            self.assertEqual(list(root.glob(".slides-*.json")), [])
+
+            def bad_runner(arguments, **_options):
+                Path(arguments[-1]).write_text('{"schema_version":1,"segments":[]}', encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "invalid_segments"):
+                run_speech_model(audio, str(executable), "ekeekrta-stt-test-v1", 30, bad_runner)
+
+    def test_private_worker_creates_review_draft_from_configured_local_model(self):
+        self.db.add(ClassSession(id=46, course_id=1, jitsi_room_id="model-ended",
+                                 ended_at=datetime.now(timezone.utc)))
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            storage_key = f"{'a' * 32}.mp4"
+            raw = b"\x00\x00\x00\x18ftypisom" + b"private-recording"
+            (root / storage_key).write_bytes(raw)
+            prepared = root / "derived" / ("a" * 32)
+            (prepared / "frames").mkdir(parents=True)
+            (prepared / "audio.wav").write_bytes(b"RIFF-private-audio")
+            (prepared / "frames" / "000001.jpg").write_bytes(b"frame")
+            executable = root / "ekeekrta-stt.exe"
+            executable.write_bytes(b"private-model")
+            recording = AILectureRecording(institution_id=1, course_id=1, session_id=46,
+                uploaded_by=1, original_filename="class.mp4", content_type="video/mp4",
+                storage_key=storage_key, size_bytes=len(raw), sha256=hashlib.sha256(raw).hexdigest(),
+                status="media_prepared")
+            self.db.add(recording); self.db.flush()
+            self.db.add(AILecturePreparationJob(institution_id=1, course_id=1,
+                recording_id=recording.id, requested_by=1, status="queued",
+                stage="awaiting_private_worker"))
+            self.db.commit()
+
+            def model_runner(arguments, **_options):
+                self.assertIn("--input-audio", arguments)
+                Path(arguments[-1]).write_text(json.dumps({
+                    "schema_version": 1, "language": "en",
+                    "segments": [
+                        {"start_ms": 0, "end_ms": 14000, "speaker": "Faculty", "confidence": 0.94,
+                         "text": "The lecture explains that load balancing distributes incoming requests across healthy application servers."},
+                        {"start_ms": 14000, "end_ms": 30000, "speaker": "Faculty", "confidence": 0.92,
+                         "text": "Health checks temporarily remove unavailable servers and return them to routing only after successful recovery checks."},
+                        {"start_ms": 30000, "end_ms": 42000, "speaker": "Faculty", "confidence": 0.90,
+                         "text": "Students compare round robin routing with least connection routing using the demonstrated cloud architecture."},
+                    ]}), encoding="utf-8")
+
+            patches = [
+                patch.object(settings, "recording_storage_dir", folder),
+                patch.object(settings, "native_speech_model_executable", str(executable)),
+                patch.object(settings, "native_speech_model_id", "ekeekrta-stt-test-v1"),
+                patch.object(settings, "native_slide_ocr_executable", ""),
+                patch.object(settings, "native_slide_ocr_model_id", ""),
+            ]
+            for active_patch in patches:
+                active_patch.start(); self.addCleanup(active_patch.stop)
+            result = process_next_recording_job(self.db, 1, runner=model_runner)
+            self.assertEqual(result["stage"], "transcript_draft_ready_for_faculty_review")
+            self.assertTrue(result["result"]["transcript_created"])
+            lecture = self.db.query(AILectureContent).filter(AILectureContent.session_id == 46).one()
+            self.assertEqual(lecture.transcript_source, "ekeekrta_local_models")
+            self.assertEqual(lecture.status, "draft")
+            self.assertEqual(lecture.summary["model_provenance"]["speech_model_id"], "ekeekrta-stt-test-v1")
+            self.assertTrue(lecture.summary["review_required"])
+            self.assertEqual(self.db.get(AILectureRecording, recording.id).status, "transcript_draft_ready")
+
+    def test_jibri_import_is_private_idempotent_and_queues_processing(self):
+        self.db.add(ClassSession(id=47, course_id=1, jitsi_room_id="jibri-ended",
+                                 ended_at=datetime.now(timezone.utc)))
+        self.db.commit()
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / "jibri-class.mp4"
+            source.write_bytes(b"\x00\x00\x00\x18ftypisom" + b"recorded-class")
+            private = root / "private"
+            with patch.object(settings, "recording_storage_dir", str(private)):
+                with self.assertRaisesRegex(ValueError, "permission_not_confirmed"):
+                    ingest_jibri_recording(self.db, 47, source, False)
+                item = ingest_jibri_recording(self.db, 47, source, True)
+                repeated = ingest_jibri_recording(self.db, 47, source, True)
+            self.assertEqual(item.id, repeated.id)
+            self.assertEqual(item.status, "preparation_queued")
+            self.assertEqual(self.db.query(AILecturePreparationJob).filter_by(recording_id=item.id).count(), 1)
+            self.assertEqual(len(list(private.glob("*.mp4"))), 1)
+            item.created_at = datetime.now(timezone.utc) - timedelta(days=10)
+            job = self.db.query(AILecturePreparationJob).filter_by(recording_id=item.id).one()
+            self.db.commit()
+            with patch.object(settings, "recording_storage_dir", str(private)), patch.object(
+                    settings, "recording_retention_days", 7):
+                self.assertEqual(purge_expired_recordings(self.db)["eligible_recording_ids"], [])
+                job.status = "completed"; self.db.commit()
+                preview = purge_expired_recordings(self.db)
+                self.assertEqual(preview["eligible_recording_ids"], [item.id])
+                applied = purge_expired_recordings(self.db, True)
+            self.assertEqual(applied["deleted"], 1)
+            self.assertEqual(list(private.glob("*.mp4")), [])
+            self.assertEqual(self.db.get(AILectureRecording, item.id).status, "expired")
+
     def test_stage_four_rejects_false_audio_origin_and_weak_transcript(self):
         self.db.add(ClassSession(id=43, course_id=1, jitsi_room_id="lecture-second",
                                  ended_at=datetime.now(timezone.utc)))
@@ -332,6 +562,48 @@ class NativeAITest(unittest.TestCase):
         self.assertEqual(saved.status_code, 201, saved.text)
         self.assertEqual(self.db.query(AITrainingExample).count(), 1)
         self.assertGreaterEqual(self.db.query(AIAuditLog).count(), 2)
+
+    def test_stage_five_progress_insights_are_explainable_read_only_and_scoped(self):
+        yesterday = datetime.now(timezone.utc) - timedelta(days=1)
+        self.db.add_all([
+            Assignment(id=30, course_id=1, title="Due one", max_marks=100, due_date=yesterday),
+            Assignment(id=31, course_id=1, title="Due two", max_marks=100, due_date=yesterday),
+            Assignment(id=32, course_id=1, title="Graded", max_marks=100, due_date=yesterday),
+            Quiz(id=30, course_id=1, title="Quiz one"),
+            Quiz(id=31, course_id=1, title="Quiz two"),
+            ClassSession(id=30, course_id=1, jitsi_room_id="stage-five-one",
+                         scheduled_at=datetime.now(timezone.utc), ended_at=datetime.now(timezone.utc)),
+            ClassSession(id=31, course_id=1, jitsi_room_id="stage-five-two",
+                         scheduled_at=datetime.now(timezone.utc), ended_at=datetime.now(timezone.utc)),
+        ])
+        self.db.flush()
+        self.db.add_all([
+            Submission(assignment_id=32, student_id=3, file_url="https://example.com/work", marks_obtained=30),
+            QuizAttempt(quiz_id=30, student_id=3, score=35),
+            QuizAttempt(quiz_id=31, student_id=3, score=40),
+            Attendance(session_id=30, student_id=3, duration_minutes=4, present=False),
+            Attendance(session_id=31, student_id=3, duration_minutes=5, present=False),
+        ])
+        self.db.commit()
+
+        student = self.request("GET", "/ai/progress-insights", user=3)
+        self.assertEqual(student.status_code, 200, student.text)
+        payload = student.json()
+        self.assertEqual((payload["stage"], payload["summary"]["total_students"]), (5, 1))
+        self.assertEqual(payload["students"][0]["risk_level"], "critical")
+        self.assertEqual(payload["students"][0]["metrics"]["assignments"]["missing_due"], 2)
+        self.assertTrue(any("Attendance is 0.0%" in item for item in payload["students"][0]["risk_reasons"]))
+        self.assertFalse(payload["external_model"])
+        self.assertIn("not an official grade", payload["notice"])
+        self.assertEqual(self.db.query(Submission).count(), 1, "Reading insights must not change academic records")
+
+        faculty = self.request("GET", "/ai/progress-insights?course_id=1", user=1)
+        self.assertEqual(faculty.status_code, 200, faculty.text)
+        self.assertEqual(faculty.json()["scope"]["course"]["code"], "CS401")
+        self.assertEqual([item["student_id"] for item in faculty.json()["students"]], [3])
+        self.assertEqual(self.request("GET", "/ai/progress-insights?course_id=2", user=1).status_code, 403)
+        self.assertEqual(self.request("GET", "/ai/progress-insights?course_id=1", user=6).status_code, 404)
+        self.assertGreaterEqual(self.db.query(AIAuditLog).filter_by(event_type="progress_insights_viewed").count(), 2)
 
     def test_student_cgpa_planner_uses_real_course_evidence_and_checks_feasibility(self):
         self.db.add_all([

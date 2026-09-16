@@ -8,8 +8,9 @@ function getToken() {
 
 export async function apiFetch(path, options = {}) {
   const token = getToken();
+  const multipart = typeof FormData !== "undefined" && options.body instanceof FormData;
   const headers = {
-    "Content-Type": "application/json",
+    ...(!multipart ? { "Content-Type": "application/json" } : {}),
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
     ...options.headers,
     ...institutionHeaders(),

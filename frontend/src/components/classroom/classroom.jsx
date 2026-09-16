@@ -59,6 +59,8 @@ export default function Classroom({ roomId, courseId, studentId, studentName, se
   const fullscreenRequiredRef = useRef(true);
   const sessionEndedRef = useRef(false);
   const joinTimeoutRef = useRef(null);
+  const recordingRequestedRef = useRef(false);
+  const recordingModeRef = useRef(null);
 
   const [fullscreenRequired, setFullscreenRequired] = useState(true);
   const [isCurrentlyFullscreen, setIsCurrentlyFullscreen] = useState(false);
@@ -66,6 +68,7 @@ export default function Classroom({ roomId, courseId, studentId, studentName, se
   const [endingClass, setEndingClass] = useState(false);
   const [callStatus, setCallStatus] = useState("loading");
   const [diagnostic, setDiagnostic] = useState("");
+  const [recordingStatus, setRecordingStatus] = useState("unavailable");
 
   const sendAttendance = useCallback(
     (eventType, keepalive = false) => {
@@ -96,6 +99,9 @@ export default function Classroom({ roomId, courseId, studentId, studentName, se
     intentionalExitRef.current = false;
     sessionEndedRef.current = false;
     lastErrorRef.current = "";
+    recordingRequestedRef.current = false;
+    recordingModeRef.current = null;
+    setRecordingStatus("unavailable");
     setCallStatus("loading");
     setDiagnostic("");
 
@@ -120,6 +126,8 @@ export default function Classroom({ roomId, courseId, studentId, studentName, se
           height: "100%",
           configOverwrite: {
             prejoinConfig: { enabled: false },
+            startWithAudioMuted: !isFaculty,
+            startWithVideoMuted: !isFaculty,
             buttonsWithNotifyClick: [{ key: "hangup", preventExecution: false }],
           },
           interfaceConfigOverwrite: {
@@ -134,6 +142,10 @@ export default function Classroom({ roomId, courseId, studentId, studentName, se
           },
         });
         apiRef.current = api;
+        if (isFaculty && connection.recording?.available) {
+          recordingModeRef.current = connection.recording.mode || "file";
+          setRecordingStatus("ready");
+        }
         setCallStatus("connecting");
         joinTimeoutRef.current = window.setTimeout(() => {
           if (!joinedRef.current && !sessionEndedRef.current) {
@@ -156,6 +168,31 @@ export default function Classroom({ roomId, courseId, studentId, studentName, se
               // remains visible and provides that user gesture as fallback.
             });
           }
+        });
+
+        api.addEventListener("participantRoleChanged", ({ role }) => {
+          if (isFaculty && role === "moderator" && connection.recording?.auto_start
+              && !recordingRequestedRef.current) {
+            recordingRequestedRef.current = true;
+            setRecordingStatus("starting");
+            api.executeCommand("startRecording", {
+              mode: connection.recording.mode || "file",
+              shouldShare: true,
+              extraMetadata: { ekeekrta_session_id: String(sessionId),
+                               ekeekrta_course_id: String(courseId) },
+            });
+          }
+        });
+
+        api.addEventListener("recordingStatusChanged", ({ on, mode, error }) => {
+          if (mode && mode !== recordingModeRef.current) return;
+          if (error) {
+            recordingRequestedRef.current = false;
+            setRecordingStatus("failed");
+            setDiagnostic(`Server recording failed · ${error}`);
+            return;
+          }
+          setRecordingStatus(on ? "recording" : "stopped");
         });
 
         api.addEventListener("toolbarButtonClicked", ({ key }) => {
@@ -295,6 +332,11 @@ export default function Classroom({ roomId, courseId, studentId, studentName, se
     if (!sessionId || !window.confirm("End this class for every participant?")) return;
     setEndingClass(true);
     try {
+      if (recordingModeRef.current && recordingRequestedRef.current) {
+        setRecordingStatus("stopping");
+        apiRef.current?.executeCommand("stopRecording", recordingModeRef.current, false);
+        await new Promise(resolve => window.setTimeout(resolve, 1200));
+      }
       await apiFetch(`/attendance/sessions/${sessionId}/end`, { method: "PATCH" });
       sessionEndedRef.current = true;
       intentionalExitRef.current = true;
@@ -327,6 +369,7 @@ export default function Classroom({ roomId, courseId, studentId, studentName, se
 
       {isFaculty && sessionId && (
         <div className="classroom-controls">
+          {recordingStatus !== "unavailable" && <span className="classroom-recording-status" role="status">Recording: {recordingStatus}</span>}
           <button onClick={toggleFullscreenRequirement} disabled={togglingFullscreen || endingClass} className="classroom-control">
             {fullscreenRequired ? "Fullscreen required" : "Normal screen allowed"}
           </button>

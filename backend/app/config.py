@@ -14,9 +14,29 @@ class Settings(BaseSettings):
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 60 * 24  # 24 hours
     minimum_attendance_minutes: float = 30
+    # Local/college recording intake only; Vercel uploads are disabled.
+    recording_storage_dir: str = "private-recordings"
+    recording_max_upload_mb: int = Field(default=250, ge=1, le=1000)
+    # Host path mapped to Jibri's finalized /storage recordings directory.
+    jibri_recordings_dir: str = ""
+    jibri_recording_max_mb: int = Field(default=10000, ge=100, le=50000)
+    # Zero disables expiry; an institution must explicitly approve a policy.
+    recording_retention_days: int = Field(default=0, ge=0, le=3650)
+    # Optional institution-built model executables. Empty means unavailable;
+    # there is deliberately no cloud or public-model fallback.
+    native_speech_model_executable: str = ""
+    native_speech_model_id: str = ""
+    native_slide_ocr_executable: str = ""
+    native_slide_ocr_model_id: str = ""
+    native_model_timeout_minutes: int = Field(default=120, ge=1, le=720)
 
     video_provider: Literal["jaas", "jitsi"] = "jaas"
     jitsi_domain: str = "meet.jit.si"
+    jitsi_jwt_app_id: str = ""
+    jitsi_jwt_app_secret: SecretStr = SecretStr("")
+    jitsi_jwt_expire_minutes: int = Field(default=60, ge=5, le=240)
+    # Enable only after the college Jitsi deployment has a working Jibri pool.
+    jitsi_auto_recording_enabled: bool = False
     jaas_app_id: str = ""
     jaas_api_key_id: str = ""
     # Relative paths are resolved from backend/, never exposed to the browser.
@@ -29,6 +49,16 @@ class Settings(BaseSettings):
     allowed_email_domain: str = "hitam.org"
     # Public Google OAuth Web client ID. Empty keeps Google sign-in disabled.
     google_client_id: str = ""
+    # Password recovery is disabled until an institution/operator configures
+    # an SMTP sender. Reset tokens are short-lived and only their hashes are stored.
+    smtp_host: str = ""
+    smtp_port: int = Field(default=587, ge=1, le=65535)
+    smtp_username: str = ""
+    smtp_password: SecretStr = SecretStr("")
+    smtp_from_email: str = ""
+    smtp_security: Literal["starttls", "ssl", "none"] = "starttls"
+    password_reset_base_url: str = "http://127.0.0.1:5173"
+    password_reset_expire_minutes: int = Field(default=30, ge=5, le=120)
     code_runner_url: str = "https://ce.judge0.com"
     code_runner_api_key: SecretStr = SecretStr("")
     code_runner_timeout_ms: int = Field(default=3000, ge=500, le=10000)

@@ -1044,3 +1044,136 @@ institution-only onboarding workflow is documented below.
   lecture routes returned HTTP 401 to anonymous requests, the frontend origin
   passed CORS preflight, and the ERP token-protected endpoint rejected an
   anonymous request with HTTP 401. No real class or recording test was run.
+
+-----------------------------------------------------------------------------
+41. PRIVATE RECORDING INTAKE — LOCAL FOUNDATION, NOT DEPLOYED
+-----------------------------------------------------------------------------
+- Added a faculty/admin-only, completed-class MP4/WebM upload to a private,
+  Git-ignored local recording directory. The API enforces participant-permission
+  confirmation, a configurable size limit, basic media-header checks, opaque
+  filenames, institution/course scope, and an audit trail. Students have no raw
+  recording route. Authorized faculty can remove local media without removing
+  lecture notes.
+- The course UI shows a recording as uploaded, never as transcribed, and keeps
+  verified transcript review as the only current route to AI lecture notes.
+  A local operator script can verify the recording's size/hash and use FFmpeg
+  to prepare private 16 kHz audio and sampled JPEG video frames. It does not
+  transcribe or read slide text. FFmpeg has not been run on a real meeting here.
+  Vercel refuses raw video upload and deletion; a future college-operated
+  worker must own video storage and processing.
+- Automatic Jitsi recording, audio transcription with an EKEEKRTA-trained model,
+  screen-share-specific extraction/OCR, retention automation, and real recording
+  playback are still NOT built. This change is local only and is not yet on
+  the public Vercel site or GitHub.
+- Verification: local tests simulate FFmpeg media output and verify private
+  preparation and deletion. Frontend role/page rendering checks and the
+  production build passed. No real recording file was processed.
+
+-----------------------------------------------------------------------------
+42. NATIVE AI STAGE 4 PRIVATE PROCESSING QUEUE — 16 SEPTEMBER 2026
+-----------------------------------------------------------------------------
+- Faculty and administrators can queue an uploaded, completed-class recording
+  for preparation without running FFmpeg inside the web request. Repeated queue
+  requests are idempotent while work is waiting or processing.
+- Added an institution-operated worker command that verifies the recording's
+  stored size and SHA-256, prepares private mono audio and sampled frames, and
+  stores only safe job results. Queue, processing, failure, retry, completion,
+  cancellation and attempt counts are recorded. Raw FFmpeg diagnostics, media,
+  transcript text and secrets are not stored in the job record.
+- The course UI polls metadata and honestly shows whether preparation was never
+  requested, queued, processing, failed, cancelled, or completed. A completed
+  job explicitly says that the transcription model is not connected.
+- The worker path has automated tests for recording-integrity rejection, safe
+  failure codes, retry and successful simulated media preparation. It has not
+  processed a real recording, does not automatically record Jitsi, and does not
+  transcribe speech, separate speakers, identify screen sharing, run OCR or
+  generate notes from media. The serverless-safe status UI and API contract are
+  public, but the private worker scripts, media and model runtime remain local
+  and were excluded from Vercel. These changes have not been pushed to GitHub.
+
+-----------------------------------------------------------------------------
+43. NATIVE AI STAGE 4 END-TO-END INTEGRATION CONTRACT — 16 SEPTEMBER 2026
+-----------------------------------------------------------------------------
+- Added an offline executable contract for institution-built speech and slide
+  OCR models. There is no external API, model download or silent fallback.
+  Timestamp, speaker, confidence, text, size and schema validation fail closed;
+  processes run without a shell and raw model diagnostics are suppressed.
+- When a configured speech executable returns valid evidence, the private worker
+  creates an EKEEKRTA-local transcript and extractive notes draft with model
+  provenance. The result remains private until the existing faculty statement
+  review and publication workflow is completed.
+- Self-hosted Jitsi connections now require a backend-signed room JWT; anonymous
+  fallback is refused. Moderator claims are derived from server-authorized roles.
+  When explicitly enabled for a working Jibri deployment, the faculty iframe
+  requests file recording after moderator confirmation and stops it before the
+  class ends. Students still start muted and cannot enable automatic recording.
+- Added a trusted host-side Jibri importer. It accepts only a finalized directory
+  inside the configured private Jibri root, one validated media file, a completed
+  class, explicit permission confirmation and a session ID carried as recording
+  metadata (or supplied by the operator). Import automatically queues processing.
+- Added explicit retention tooling. Expiry is disabled at zero days, dry-run is
+  the default, active jobs are skipped, destructive application requires a
+  separate confirmation flag, and reviewed notes plus audit history remain.
+- Added deployment/jitsi/README.md using the official stable Docker package
+  workflow, JWT/Jibri configuration alignment and production prerequisites.
+- Automated tests cover the local model JSON contract, invalid output cleanup,
+  end-to-end private draft creation, Jibri import idempotency, JWT role claims,
+  integrity rejection and retry. No speech or OCR model has been trained or
+  supplied, FFmpeg is not installed, and Docker Desktop's engine is not running.
+  Therefore a real automatic recording/transcription cannot honestly be marked
+  operational. The serverless-safe application integration is deployed, but the
+  self-hosted Jitsi/Jibri infrastructure and private model worker remain local.
+  These changes have not been pushed to GitHub.
+
+-----------------------------------------------------------------------------
+44. NATIVE AI STAGE 5 PROGRESS INTELLIGENCE — 16 SEPTEMBER 2026 (DEPLOYED)
+-----------------------------------------------------------------------------
+- Added a dedicated Progress Intelligence workspace to every role's AI page.
+  It reads current attendance, due and graded assignments, quiz attempts and
+  programming-assessment results; it does not create sample evidence.
+- Every student result shows a transparent Critical, High, Watch, Stable or
+  Insufficient Data level, the exact threshold reasons, evidence counts,
+  prioritized support actions and a course-by-course breakdown. Thresholds are
+  returned by the API rather than hidden inside an unexplained prediction.
+- Only ended class sessions after a student's enrolment count as final
+  attendance evidence. No attendance row in an ended class is treated as an
+  absence, while live classes and classes held before enrolment are excluded.
+- Access uses the existing fail-closed boundaries: students see only themselves,
+  faculty only enrolled students in their courses, HODs only their department,
+  and administrators only their institution. Course filters are checked again
+  on the backend. Views write a count-only audit event and never copy detailed
+  student evidence into that event.
+- Stage 5 is read-only. It cannot change a mark, attendance record, enrolment,
+  course or ERP result, and it calls no external model/API. The interface states
+  that its output is a support indicator rather than an official grade,
+  diagnosis or automatic academic decision.
+- Verification passed: all 142 backend tests, the complete dashboard rendering
+  checks, Python compilation, whitespace validation and the production frontend
+  build. Tests cover critical-risk evidence, no-write behavior, faculty course
+  scope and cross-institution denial. No production student outcome was tested.
+- Deployed the tested backend and frontend to the existing production projects:
+  https://smart-virtual-lms-backend-gules.vercel.app and
+  https://ekeekrta.vercel.app. Public verification passed: backend health is OK,
+  anonymous Stage 5 access is rejected with HTTP 401, the login and direct AI
+  routes return HTTP 200, and the published JavaScript bundle contains the
+  Progress Intelligence workspace. The source changes remain uncommitted and
+  have not been pushed to GitHub.
+
+-----------------------------------------------------------------------------
+45. ACCOUNT ACCESS AND BULK-IMPORT UX — 16 SEPTEMBER 2026 (LOCAL)
+-----------------------------------------------------------------------------
+- The administrator Bulk Account Builder now downloads a header-only CSV
+  template for student/faculty import. It contains no fabricated user records.
+- The sign-in page now links to a complete password-recovery flow. Reset tokens
+  are cryptographically random, stored only as SHA-256 hashes, expire, work once,
+  and are bound to the institution portal that requested them. Responses do not
+  reveal whether an account exists, repeated requests are throttled, and email
+  delivery runs after the HTTP response. A successful reset invalidates existing
+  EKEEKRTA sessions.
+- Password email remains disabled until an operator configures SMTP entirely in
+  environment variables. Google Workspace sign-in was already fully built and
+  tested, but still requires a real Google OAuth Web client ID plus authorized
+  JavaScript origins; it never creates users or assigns roles automatically.
+- Verification passed: production frontend build, isolated dashboard rendering,
+  password/Google authentication tests, and the full 145-test backend suite.
+  This update has not yet been deployed or pushed to GitHub.

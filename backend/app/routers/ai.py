@@ -3,7 +3,7 @@ import secrets
 from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -26,6 +26,7 @@ from app.integrations.erp_client import enqueue_course_to_erp, fetch_erp_academi
 from app.native_ai.intent_model import model
 from app.native_ai.content_generator import ContentDraftError, build_assignment_draft, build_quiz_draft
 from app.native_ai.course_retrieval import retrieve
+from app.native_ai.progress_intelligence import build_progress_insights
 from app.schemas.ai import (AIBulkAccountsIn, AICapabilitiesOut, AIActionOut, AICGPAPlanIn, AICommandIn,
                             AICommandOut, AICorrectionIn, AIContentDraftIn, AICourseQuestionIn,
                             AIKnowledgePublicationIn, AIKnowledgeSourceIn, AI_INTENTS)
@@ -322,8 +323,25 @@ def capabilities(user: User = Depends(get_current_user)):
     available = [{"intent": intent, "label": labels[intent]} for intent in sorted(ROLE_INTENTS[user.role])]
     if user.role == UserRole.student:
         available.append({"intent": "cgpa_plan", "label": "Build a target-CGPA improvement roadmap"})
+    available.append({"intent": "progress_insights", "label": "Review explainable progress and risk insights"})
     return {"engine": "EKEEKRTA Native Intent Model v1", "external_models": False,
             "capabilities": available}
+
+
+@router.get("/progress-insights")
+def progress_insights(course_id: int | None = Query(default=None, ge=1),
+                      db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """Read-only Stage 5 insights restricted by the existing role/course boundaries."""
+    result = build_progress_insights(db, user, course_id)
+    _audit(db, user, "progress_insights_viewed", None, {
+        "course_id": course_id,
+        "student_count": result["summary"]["total_students"],
+        "risk_counts": {key: result["summary"][key]
+                        for key in ("critical", "high", "watch", "stable", "insufficient_data")},
+        "external_model": False,
+    })
+    db.commit()
+    return result
 
 
 def _course_priority_records(db: Session, student: User, weekly_hours: float) -> list[dict]:

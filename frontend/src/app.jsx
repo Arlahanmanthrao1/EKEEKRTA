@@ -19,6 +19,8 @@ import AIAssistantPage from "./pages/AIAssistantPage";
 import AIReviewPage from "./pages/AIReviewPage";
 import ChangePasswordPage from "./pages/ChangePasswordPage";
 import SettingsPage from "./pages/SettingsPage";
+import ForgotPasswordPage from "./pages/ForgotPasswordPage";
+import ResetPasswordPage from "./pages/ResetPasswordPage";
 import { ThemeProvider } from "./context/ThemeContext";
 
 function DashboardRouter() {
@@ -47,6 +49,8 @@ function AppRoutes() {
     return (
       <Routes>
         <Route path="/login" element={<Login />} />
+        <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+        <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route path="/register-institution" element={institutionHost() ? <Navigate to="/login" replace /> : <InstitutionRegistration />} />
         <Route path="*" element={<Navigate to="/login" state={{ from: location.pathname }} replace />} />
       </Routes>

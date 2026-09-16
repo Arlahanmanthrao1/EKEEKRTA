@@ -24,7 +24,16 @@ const intentNames = {
   cgpa_plan: "Target CGPA roadmap", course_question: "Course knowledge question",
 };
 
+const riskLabels = {
+  critical: "Critical support",
+  high: "High support",
+  watch: "Watch",
+  stable: "Stable",
+  insufficient_data: "Insufficient data",
+};
+
 const bulkHeaders = ["role", "name", "email", "institutional_id", "department", "program", "batch", "semester_number", "section"];
+export const bulkCsvTemplate = `${bulkHeaders.join(",")}\r\n`;
 
 function csvRow(line) {
   const values = []; let value = ""; let quoted = false;
@@ -76,6 +85,61 @@ function Preview({ data }) {
   ))}</dl>;
 }
 
+function MetricValue({ value, suffix = "" }) {
+  return <strong>{value === null || value === undefined ? "Not available" : `${value}${suffix}`}</strong>;
+}
+
+export function ProgressInsightsPanel({ role, courses = [], initialData = null, autoLoad = true }) {
+  const [courseId, setCourseId] = useState("");
+  const [data, setData] = useState(initialData);
+  const [loading, setLoading] = useState(autoLoad);
+  const [error, setError] = useState("");
+
+  const load = useCallback(async selected => {
+    setLoading(true); setError("");
+    try {
+      const query = selected ? `?course_id=${encodeURIComponent(selected)}` : "";
+      setData(await apiFetch(`/ai/progress-insights${query}`));
+    } catch (requestError) { setError(requestError.message); }
+    finally { setLoading(false); }
+  }, []);
+  useEffect(() => { if (autoLoad) load(courseId); }, [autoLoad, courseId, load]);
+
+  const summary = data?.summary;
+  return <section className="panel ai-progress-panel">
+    <div className="panel-title-row"><div><p className="section-eyebrow">Native AI Stage 5</p><h2>Progress intelligence</h2></div><span className="pill pill-info">Explainable · read only</span></div>
+    <p>Uses current EKEEKRTA attendance and assessed work to prioritize support. Every flag shows its reason; no mark, attendance record, or enrolment is changed.</p>
+    {!!courses.length && <label className="field-label ai-progress-course">Course scope<select className="field" value={courseId} onChange={event => setCourseId(event.target.value)}><option value="">All courses in my access scope</option>{courses.map(course => <option key={course.id} value={course.id}>{course.code} · {course.name}</option>)}</select></label>}
+    {loading && <div className="ai-progress-loading" role="status">Calculating from current records…</div>}
+    {error && <div className="error-banner" role="alert">{error}<button type="button" className="btn-text" onClick={() => load(courseId)}>Retry</button></div>}
+    {!loading && !error && data && <>
+      <div className="ai-progress-summary" aria-label="Progress insight summary">
+        <div><small>Students</small><strong>{summary.total_students}</strong></div>
+        <div className="risk-critical"><small>Critical</small><strong>{summary.critical}</strong></div>
+        <div className="risk-high"><small>High</small><strong>{summary.high}</strong></div>
+        <div className="risk-watch"><small>Watch</small><strong>{summary.watch}</strong></div>
+        <div className="risk-stable"><small>Stable</small><strong>{summary.stable}</strong></div>
+        <div><small>Insufficient data</small><strong>{summary.insufficient_data}</strong></div>
+      </div>
+      {!data.students.length ? <EmptyState>No student records are available in this scope.</EmptyState> : <div className="ai-progress-list">
+        {data.students.map(student => <details key={student.student_id} className={`ai-progress-student risk-${student.risk_level}`} open={role === "student"}>
+          <summary><div><strong>{student.student}</strong><span>{student.institutional_id || "Official ID not added"}{student.department ? ` · ${student.department}` : ""}</span></div><span className={`pill pill-risk-${student.risk_level}`}>{riskLabels[student.risk_level]}</span></summary>
+          <div className="ai-progress-student-body">
+            <div className="ai-progress-metrics">
+              <div><small>Attendance</small><MetricValue value={student.metrics.attendance.percent} suffix="%" /><span>{student.metrics.attendance.attended}/{student.metrics.attendance.held} classes</span></div>
+              <div><small>Recorded performance</small><MetricValue value={student.metrics.performance_average_percent} suffix="%" /><span>{student.metrics.performance_evidence_count} assessed record(s)</span></div>
+              <div><small>Missing due work</small><MetricValue value={student.metrics.assignments.missing_due} /><span>{student.metrics.assignments.submitted}/{student.metrics.assignments.total} assignments submitted</span></div>
+            </div>
+            <div className="ai-progress-guidance"><div><h3>Why this is flagged</h3><ul>{student.risk_reasons.map(reason => <li key={reason}>{reason}</li>)}</ul></div><div><h3>Recommended next actions</h3><ol>{student.recommended_actions.map(action => <li key={action}>{action}</li>)}</ol></div></div>
+            {!!student.courses.length && <div className="ledger-wrap"><table className="ledger ai-progress-course-table"><thead><tr><th>Course</th><th>Level</th><th>Attendance</th><th>Performance</th><th>Missing due</th></tr></thead><tbody>{student.courses.map(course => <tr key={course.course_id}><td>{course.course_code} · {course.course_name}</td><td><span className={`pill pill-risk-${course.risk_level}`}>{riskLabels[course.risk_level]}</span></td><td>{course.attendance.percent === null ? "No data" : `${course.attendance.percent}%`}</td><td>{course.performance_average_percent === null ? "No data" : `${course.performance_average_percent}%`}</td><td>{course.assignments.missing_due}</td></tr>)}</tbody></table></div>}
+          </div>
+        </details>)}
+      </div>}
+      <p className="footnote">{data.notice} Data basis: {data.data_basis}{data.scope.result_limited ? " Showing the first 250 students; narrow the course scope for a complete view." : ""}</p>
+    </>}
+  </section>;
+}
+
 export function ActionCard({ action, busy, onConfirm, onReject, onCorrect }) {
   const [showCorrection, setShowCorrection] = useState(false);
   const [correctedIntent, setCorrectedIntent] = useState(action.intent);
@@ -112,7 +176,7 @@ export function BulkAccountsPanel({ busy, onPreview }) {
     catch (parseError) { setError(parseError.message); }
   };
   return <section className="panel ai-bulk-panel">
-    <div className="panel-title-row"><div><p className="section-eyebrow">Administrator tool</p><h2>Bulk account builder</h2></div><span className="pill pill-info">CSV · maximum 250 rows</span></div>
+    <div className="panel-title-row"><div><p className="section-eyebrow">Administrator tool</p><h2>Bulk account builder</h2></div><div className="panel-title-actions"><a className="btn btn-soft" href={`data:text/csv;charset=utf-8,${encodeURIComponent(bulkCsvTemplate)}`} download="ekeekrta-account-import-template.csv">Download CSV template</a><span className="pill pill-info">CSV · maximum 250 rows</span></div></div>
     <p>Paste student and faculty records below. Passwords are not accepted; created accounts sign in with their verified institution Google account.</p>
     <label htmlFor="bulk-account-csv">Account CSV</label>
     <textarea id="bulk-account-csv" rows="8" value={csv} onChange={event => setCsv(event.target.value)} spellCheck="false" />
@@ -378,6 +442,7 @@ export default function AIAssistantPage() {
       <div><p className="section-eyebrow">EKEEKRTA Native AI · Private by design</p><h2>What would you like to do?</h2><p>Commands are interpreted inside EKEEKRTA. No external model or AI API receives your data.</p></div>
       {capabilities && <span className="ai-engine-badge">{capabilities.engine}</span>}
     </section>
+    <ProgressInsightsPanel role={user.role} courses={courses} />
     <form className="panel ai-composer" onSubmit={submit}>
       <label htmlFor="ai-command">Describe the task</label>
       <textarea id="ai-command" rows="4" value={command} onChange={event => setCommand(event.target.value)} placeholder="For example: Schedule a Cloud Computing class tomorrow at 10:30 AM" maxLength="2000" />

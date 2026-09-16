@@ -23,7 +23,7 @@ FastAPI generates this automatically from the routes and schemas.
 
 | Module | Endpoints | Notes |
 |---|---|---|
-| Auth | `POST /auth/register`, `POST /auth/login`, `GET /auth/me` | Registration is restricted to the `ALLOWED_EMAIL_DOMAIN` set in `.env`. Returns a JWT on login. |
+| Auth | `POST /auth/login`, `POST /auth/google`, `POST /auth/forgot-password`, `POST /auth/reset-password`, `GET /auth/me` | Password and verified Google Workspace login for administrator-provisioned accounts. Reset links are hashed, expiring and single-use. |
 | Courses | `POST/GET /courses`, `POST /courses/{id}/enroll` | Faculty/admin create courses, students enroll. |
 | Attendance | `POST /attendance/event`, `GET /attendance/{course_id}/{student_id}` | Authenticated Jitsi join/leave events are paired into real elapsed durations and synchronized to the ERP. |
 | Live sessions | `POST /attendance/sessions`, `PATCH /attendance/sessions/{id}/fullscreen`, `PATCH /attendance/sessions/{id}/end` | Faculty can control fullscreen policy and durably end a class for every connected student. |
@@ -78,7 +78,7 @@ need to evolve the schema without losing data later, introduce Alembic.
 
 ## Not yet built (Phase 2 — see the AI-services module in the diagram)
 
-- Lecture recording upload/storage
+- Automatic Jitsi/Jibri recording and a production recording worker
 - Whisper transcription + LLM summarization pipeline
 - Plagiarism similarity checker (`plagiarism_score` field already exists
   on `Submission`, ready to be populated)
@@ -126,6 +126,51 @@ not accept or store passwords: created accounts use their pre-provisioned,
 verified institution Google identity. Administrators may audit every AI action
 inside their institution and reject a pending request, but cannot silently
 confirm a faculty member's action on that person's behalf.
+
+The Bulk Account Builder includes a header-only **Download CSV template** action.
+It contains no sample people or fabricated institution data.
+
+## Google Workspace sign-in
+
+Create a Google OAuth client with application type **Web application**. Add every
+real frontend origin under **Authorized JavaScript origins**, including
+`http://localhost:5173` for local testing and `https://ekeekrta.vercel.app` for
+the public portal. Add each institution custom origin separately when it becomes
+active. Origins contain only scheme, hostname and optional port—no `/login` path.
+
+Set the public client identifier on the backend (never in the database):
+
+```env
+GOOGLE_CLIENT_ID=000000000000-example.apps.googleusercontent.com
+```
+
+No Google client secret is used by this browser ID-token flow. Restart the local
+backend or redeploy the backend after changing the value. Google sign-in never
+creates an account or grants a role: the administrator/ERP must create the user
+first, and the verified Workspace email/domain must match that account.
+
+## Password recovery email
+
+Password recovery remains visibly unavailable until SMTP is configured. Use a
+dedicated institution sender or transactional mail account and keep its password
+only in `backend/.env` locally or protected deployment environment variables:
+
+```env
+SMTP_HOST=smtp.your-provider.example
+SMTP_PORT=587
+SMTP_USERNAME=no-reply@institution.edu
+SMTP_PASSWORD=provider-app-password
+SMTP_FROM_EMAIL=no-reply@institution.edu
+SMTP_SECURITY=starttls
+PASSWORD_RESET_BASE_URL=http://127.0.0.1:5173
+PASSWORD_RESET_EXPIRE_MINUTES=30
+```
+
+For the public portal use `PASSWORD_RESET_BASE_URL=https://ekeekrta.vercel.app`.
+The request endpoint always returns the same success wording for known and unknown
+emails. Only a SHA-256 hash of the random reset token is stored; using the link
+changes the password, consumes all outstanding reset links, and invalidates older
+EKEEKRTA access tokens.
 
 ### Native AI Stage 2B: source-grounded teaching drafts
 
@@ -212,6 +257,126 @@ Jitsi/Jibri deployment, consent and retention policy, secure storage, and a
 locally trained speech model. Official Jitsi documentation says Jibri requires
 one recording system per simultaneous meeting and recommends running it apart
 from a resource-constrained main server.
+
+### Local recording intake (not speech transcription)
+
+Authorized course faculty may upload an MP4/WebM file for a completed session
+through the course page or `POST /ai/lectures/sessions/{id}/recording`. The form
+requires confirmation that participants were informed and recording processing
+is permitted. The backend checks the basic media header and a configurable
+size limit, hashes the file, and gives it an opaque name inside the dedicated
+`RECORDING_STORAGE_DIR` (default `backend/private-recordings/`). This directory
+is Git-ignored and is never mounted as a public or student download route.
+`GET /ai/lectures/recordings/course/{id}` shows metadata only to the course
+faculty or institution admin. They can permanently remove the local media with
+`DELETE /ai/lectures/recordings/{id}`; reviewed notes remain unchanged.
+
+Vercel intentionally refuses upload and deletion with HTTP 503: large private
+videos must stay on an institution-controlled recording worker or approved
+private object storage, not in a serverless application directory.
+
+Faculty queue preparation from the course page with
+`POST /ai/lectures/recordings/{id}/prepare`. The request returns immediately;
+it does not make a large web request run FFmpeg. On the institution's private
+machine, an operator or scheduled service processes queued work with:
+
+```powershell
+cd backend
+.\.venv\Scripts\python.exe scripts\run_recording_worker.py --institution-id 1 --max-jobs 10
+```
+
+Use the actual institution ID; this example number is not a credential. FFmpeg
+must be on the private machine's `PATH`, or pass `--ffmpeg` with its executable
+path. Run the command through Windows Task Scheduler or a Linux service when a
+continuous private worker is required. PostgreSQL workers use row locking with
+skip-locked claiming; run only one worker when using the local SQLite database.
+
+The worker records queued, processing, failed, retried, completed and cancelled
+states without storing raw diagnostic output in the database or returning it to
+faculty. It verifies size and SHA-256 before extracting
+mono 16 kHz WAV audio and a sampled JPEG frame every 30 seconds, up to 500
+frames, in the same private directory. It does not publish derivatives to
+students. A completed run is displayed as “audio and frames prepared, not
+transcribed.” A failed job exposes only a safe error code and can be explicitly
+retried by authorized faculty. This worker has only been tested with simulated FFmpeg output;
+no real meeting video has been processed here.
+
+The default unconfigured environment does not decode media until that operator
+preparation runs, distinguish screen-share frames from camera video, transcribe
+audio, read slide text, or automatically record Jitsi. Faculty-provided verified
+text therefore remains the only currently operational route to notes. Before real
+class use, configure restrictive Windows/Linux filesystem permissions, a
+retention/deletion policy, a backed-up private storage location, and reviewed
+local model executables. No retention period is silently imposed by this prototype.
+
+### Offline Stage 4 model contract and self-hosted recording
+
+Stage 4 accepts institution-built executables only; it never downloads weights
+or falls back to a cloud model. `NATIVE_SPEECH_MODEL_EXECUTABLE` receives
+`--input-audio` and `--output-json`. Its bounded JSON must use schema version 1
+and provide timestamped speaker segments with confidence values. The optional
+`NATIVE_SLIDE_OCR_EXECUTABLE` receives `--input-frames` and `--output-json` and
+returns timestamped slide text. Both processes run without a shell, with private
+paths, suppressed output and a configurable timeout. Invalid or oversized output
+fails closed. Model IDs are recorded in provenance; raw diagnostics are not.
+The exact JSON examples, dataset requirements and evaluation gates are in
+[`docs/ai-stage4-model-contract.md`](../docs/ai-stage4-model-contract.md).
+
+When a reviewed model is configured, the worker turns its transcript and slide
+evidence into the existing private extractive draft. It never publishes. Faculty
+must review individual statements before enrolled students or the course
+knowledge assistant receive anything.
+
+For the future college Jitsi deployment, self-hosted mode now requires matching
+`JITSI_JWT_APP_ID` and `JITSI_JWT_APP_SECRET`; anonymous fallback is disabled.
+Faculty moderator claims come from backend authorization, not a browser role
+selector. `JITSI_AUTO_RECORDING_ENABLED=true` makes the authenticated faculty
+iframe request Jibri file recording after Jitsi confirms moderator status and
+stop it before ending class. Keep it false until the official Jitsi/Jibri stack
+is actually operational. The private Jibri handoff and deployment checklist are
+in [`deployment/jitsi/README.md`](../deployment/jitsi/README.md).
+
+This is a completed application integration contract, **not a trained model or
+verified Jibri installation**. On the current machine FFmpeg is absent and the
+Docker engine is stopped, so automatic recording, real transcription accuracy,
+OCR accuracy and multi-device calling remain unverified.
+
+Recording expiry is disabled by default. After the institution approves a
+policy, set `RECORDING_RETENTION_DAYS` above zero, preview eligible IDs, and only
+then apply deletion from the private worker:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\purge_expired_recordings.py
+.\.venv\Scripts\python.exe scripts\purge_expired_recordings.py --confirm-delete
+```
+
+Active queued/processing recordings are skipped. Raw and derived media are
+removed; reviewed lecture notes and the audit trail are preserved.
+
+### Native AI Stage 5: explainable progress intelligence
+
+`GET /ai/progress-insights` provides a read-only student-support view using
+current EKEEKRTA attendance, due assignments, graded assignments, quizzes and
+programming assessments. It calls no external model and does not modify marks,
+attendance, enrolments or ERP results. Every risk level includes the exact
+threshold reasons, recommended next actions, evidence counts and a course-level
+breakdown. Missing evidence is labelled `insufficient_data`; it is never treated
+as a good or bad result.
+
+The normal access boundary is applied before calculation: a student sees only
+their record, faculty see only students enrolled in their courses, an HOD sees
+only their department, and an administrator stays within their institution.
+The optional `course_id` filter must also be inside that scope. Only ended class
+sessions after the student's enrolment are final attendance evidence. The
+response is capped at 250 scoped students and tells the caller if that limit was
+reached. Views are audited using counts and scope only, without copying student
+results into the audit event.
+
+Stage 5 is a transparent rules baseline, not a diagnosis, official grade or
+automatic intervention. Its published thresholds are returned in every response
+and should be reviewed by each institution before production use. A future
+trained risk model must be evaluated separately for bias, calibration and false
+alerts before it can replace or supplement these rules.
 
 ## Security notes before this goes anywhere near production
 

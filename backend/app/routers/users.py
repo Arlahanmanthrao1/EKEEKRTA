@@ -5,11 +5,13 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.user import User, UserRole
-from app.models.ai import AIAction, AIAuditLog, AIKnowledgeSource, AILectureContent, AITrainingExample
+from app.models.ai import (AIAction, AIAuditLog, AIKnowledgeSource, AILectureContent,
+                           AILecturePreparationJob, AILectureRecording, AITrainingExample)
 from app.models.assignment import Submission
 from app.models.attendance import Attendance
 from app.models.course import Course, Enrollment
 from app.models.google_identity import GoogleIdentity
+from app.models.password_reset import PasswordResetToken
 from app.models.material import StudyMaterial
 from app.models.programming import ProgrammingSubmission
 from app.models.quiz import QuizAttempt
@@ -99,6 +101,8 @@ def delete_account(user_id: int, db: Session = Depends(get_db),
         or db.query(AITrainingExample.id).filter(AITrainingExample.submitted_by == account.id).first()
         or db.query(AIKnowledgeSource.id).filter(AIKnowledgeSource.created_by == account.id).first()
         or db.query(AILectureContent.id).filter(AILectureContent.submitted_by == account.id).first()
+        or db.query(AILectureRecording.id).filter(AILectureRecording.uploaded_by == account.id).first()
+        or db.query(AILecturePreparationJob.id).filter(AILecturePreparationJob.requested_by == account.id).first()
     )
     if protected_records:
         raise HTTPException(
@@ -112,6 +116,7 @@ def delete_account(user_id: int, db: Session = Depends(get_db),
     )
     db.query(Enrollment).filter(Enrollment.student_id == account.id).delete(synchronize_session=False)
     db.query(GoogleIdentity).filter(GoogleIdentity.user_id == account.id).delete(synchronize_session=False)
+    db.query(PasswordResetToken).filter(PasswordResetToken.user_id == account.id).delete(synchronize_session=False)
     db.delete(account)
     db.commit()
 
