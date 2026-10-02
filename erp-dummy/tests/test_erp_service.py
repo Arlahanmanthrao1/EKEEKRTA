@@ -1,6 +1,7 @@
 """Sandbox ERP tests use only disposable in-memory records."""
 
 import unittest
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
@@ -11,7 +12,8 @@ from sqlalchemy.pool import StaticPool
 from app.config import settings
 from app.database import Base, get_db
 from app.main import app
-from app.models import AcademicResult, AttendanceRecord, Course, Student, SyncReceipt
+from app.models import (AcademicResult, AttendanceRecord, Course, OfflineClassSession,
+                        Student, SyncReceipt, WhatsAppNotification)
 
 
 class ERPSandboxTest(unittest.TestCase):
@@ -99,19 +101,133 @@ class ERPSandboxTest(unittest.TestCase):
         response = self.client.get("/api/dashboard", headers=self.auth)
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["counts"], {"users": 1, "students": 1, "faculty": 0,
-                                                     "hod": 0, "courses": 0, "attendance": 0, "results": 0})
+                                                     "hod": 0, "courses": 0, "attendance": 0,
+                                                     "results": 0, "offline_classes": 0,
+                                                     "whatsapp_alerts": 0})
         self.assertNotIn("isolated-sandbox-token", response.text)
         page = self.client.get("/")
         self.assertEqual(page.status_code, 200)
         self.assertIn("ERP Sandbox", page.text)
         self.assertIn("HYDERABAD INSTITUTE OF TECHNOLOGY", page.text)
         self.assertIn("ACADEMIC REGISTER", page.text)
+        self.assertIn("COURSE DIRECTORY", page.text)
         self.assertIn("STUDENT ATTENDANCE", page.text)
+        self.assertIn("MARK OFFLINE ATTENDANCE", page.text)
+        self.assertIn("WHATSAPP ALERTS", page.text)
         self.assertIn("ADD USER", page.text)
         self.assertIn("USER DIRECTORY", page.text)
         self.assertIn("'add-user','results'", page.text)
         self.assertIn("No sample records are generated", page.text)
         self.assertNotIn("Aisha Khan", page.text)
+
+    def test_final_absence_sends_one_opted_in_parent_template_message(self):
+        student = {"role": "student", "institutional_id": "A-001", "name": "Test Student",
+                   "email": "student@alpha.edu", "department": "CS", "program": "B.Tech",
+                   "batch": "2026-2030", "semester_number": 1, "section": "A",
+                   "parent_phone": "+919876543210", "parent_whatsapp_opt_in": True}
+        self.assertEqual(self.client.post("/api/users", headers=self.auth, json=student).status_code, 201)
+        absent = self.attendance(5)
+        absent["class_session"]["ended_at"] = "2026-09-05T10:00:00Z"
+        absent["attendance"]["present"] = False
+        with (patch.object(settings, "whatsapp_notifications_enabled", True),
+              patch.object(settings, "whatsapp_graph_api_version", "v99.0"),
+              patch.object(settings, "whatsapp_phone_number_id", "123456789"),
+              patch.object(settings, "whatsapp_access_token", SecretStr("test-meta-token-with-safe-length")),
+              patch("app.integrations.whatsapp.httpx.post") as post):
+            post.return_value.status_code = 200
+            post.return_value.json.return_value = {"messages": [{"id": "wamid.test-message"}]}
+            sent = self.post("/api/ekeekrta/attendance/sync", absent, "absence-final-1")
+            self.assertEqual(sent.status_code, 200, sent.text)
+            self.assertEqual(sent.json()["whatsapp_notification"]["status"], "sent")
+            # A new ERP revision for the same attendance row must not message twice.
+            replay = self.post("/api/ekeekrta/attendance/sync", absent, "absence-final-2")
+            self.assertEqual(replay.status_code, 200, replay.text)
+            self.assertEqual(post.call_count, 1)
+            request = post.call_args.kwargs["json"]
+            self.assertEqual(request["to"], "919876543210")
+            self.assertEqual(request["type"], "template")
+        notification = self.db.query(WhatsAppNotification).one()
+        self.assertEqual(notification.parent_phone_last4, "3210")
+        self.assertNotIn("+919876543210", self.client.get(
+            "/api/whatsapp-notifications", headers=self.auth).text)
+
+    def test_unfinished_absence_does_not_notify_parent(self):
+        self.post("/api/ekeekrta/students/sync", self.student(), "unfinished-student")
+        with patch("app.integrations.whatsapp.httpx.post") as post:
+            response = self.post("/api/ekeekrta/attendance/sync", self.attendance(5),
+                                 "unfinished-attendance")
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["whatsapp_notification"]["status"], "not_final")
+        post.assert_not_called()
+        self.assertEqual(self.db.query(WhatsAppNotification).count(), 0)
+
+    def test_offline_class_absence_is_finalized_and_alerts_parent_once(self):
+        student = {"role": "student", "institutional_id": "A-001", "name": "Test Student",
+                   "email": "student@alpha.edu", "department": "CS", "program": "B.Tech",
+                   "batch": "2026-2030", "semester_number": 1, "section": "A",
+                   "parent_phone": "+919876543210", "parent_whatsapp_opt_in": True}
+        faculty = {"role": "faculty", "institutional_id": "EMP-3", "name": "Test Faculty",
+                   "email": "faculty@alpha.edu", "department": "CS"}
+        self.assertEqual(self.client.post("/api/users", headers=self.auth, json=student).status_code, 201)
+        self.assertEqual(self.client.post("/api/users", headers=self.auth, json=faculty).status_code, 201)
+        self.assertEqual(self.post("/api/ekeekrta/courses/sync", self.course(),
+                                  "offline-course-1").status_code, 200)
+        roster = self.client.get("/api/offline-attendance/roster?course_code=CS101",
+                                 headers=self.auth)
+        self.assertEqual(roster.status_code, 200, roster.text)
+        self.assertEqual([row["institutional_id"] for row in roster.json()["students"]], ["A-001"])
+        payload = {
+            "submission_id": "d9606159-ff65-4b67-8666-68b37ec3e431",
+            "course_code": "CS101",
+            "faculty_institutional_id": "EMP-3",
+            "held_at": "2026-09-06T09:00:00+05:30",
+            "duration_minutes": 60,
+            "attendance": [{"student_institutional_id": "A-001", "present": False}],
+        }
+        with (patch.object(settings, "whatsapp_notifications_enabled", True),
+              patch.object(settings, "whatsapp_graph_api_version", "v99.0"),
+              patch.object(settings, "whatsapp_phone_number_id", "123456789"),
+              patch.object(settings, "whatsapp_access_token", SecretStr("test-meta-token-with-safe-length")),
+              patch("app.integrations.whatsapp.httpx.post") as post):
+            post.return_value.status_code = 200
+            post.return_value.json.return_value = {"messages": [{"id": "wamid.offline-message"}]}
+            response = self.client.post("/api/offline-attendance", headers=self.auth, json=payload)
+            self.assertEqual(response.status_code, 201, response.text)
+            self.assertEqual(response.json()["absent"], 1)
+            duplicate = self.client.post("/api/offline-attendance", headers=self.auth, json=payload)
+            self.assertEqual(duplicate.status_code, 409, duplicate.text)
+            self.assertEqual(post.call_count, 1)
+        record = self.db.query(AttendanceRecord).one()
+        self.assertEqual(record.source, "offline")
+        self.assertFalse(record.present)
+        self.assertIsNotNone(record.session_ended_at)
+        self.assertEqual(self.db.query(OfflineClassSession).count(), 1)
+        notification = self.db.query(WhatsAppNotification).one()
+        self.assertEqual(notification.status, "sent")
+        self.assertEqual(notification.attendance_source, "offline")
+
+    def test_academic_register_uses_real_course_and_meeting_attendance(self):
+        self.post("/api/ekeekrta/students/sync", self.student(), "register-student-1")
+        self.post("/api/ekeekrta/courses/sync", self.course(), "register-course-1")
+        self.post("/api/ekeekrta/attendance/sync", self.attendance(45), "register-attendance-1")
+
+        self.assertEqual(self.client.get("/api/academic-register-directory").status_code, 401)
+        directory = self.client.get("/api/academic-register-directory", headers=self.auth)
+        self.assertEqual(directory.status_code, 200, directory.text)
+        self.assertEqual(directory.json()["students"][0]["institutional_id"], "A-001")
+
+        response = self.client.get("/api/academic-register/A-001", headers=self.auth)
+        self.assertEqual(response.status_code, 200, response.text)
+        register = response.json()
+        self.assertEqual(register["student"]["name"], "Test Student")
+        self.assertEqual(register["courses"], [
+            {"code": "CS101", "name": "Test Course", "course_type": "academic"}
+        ])
+        self.assertEqual(len(register["attendance"]), 1)
+        self.assertTrue(register["attendance"][0]["present"])
+        self.assertEqual(register["attendance"][0]["session_started_at"], "2026-09-05T09:00:00")
+        self.assertEqual(
+            self.client.get("/api/academic-register/UNKNOWN", headers=self.auth).status_code, 404)
 
     def test_erp_student_entry_is_exported_to_ekeekrta(self):
         payload = {"institutional_id": "A-009", "name": "ERP Student", "email": "erp.student@alpha.edu",

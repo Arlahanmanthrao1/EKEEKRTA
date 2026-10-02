@@ -10,7 +10,7 @@ import app.models
 from app.database import Base, get_db
 from app.core.security import create_access_token
 from app.models import User, UserRole, Course, Enrollment, Assignment, Submission, Quiz, Question, Attendance, ClassSession
-from app.models.institution import Institution, Department
+from app.models.institution import Institution, InstitutionStatus, Department
 from app.routers import auth, institutions, users, courses, assignments, quiz, materials, attendance
 from app.config import settings
 from app.integrations.erp_client import sync_attendance_to_erp
@@ -183,14 +183,52 @@ class InstitutionAccessTest(unittest.TestCase):
 
     def test_institution_registration_atomicity_and_profile(self):
         uploaded_logo="data:image/png;base64,iVBORw0KGgo="
-        payload={"institution":{"name":"Test new institution","email":"office@gamma.edu","logo_url":uploaded_logo},
+        payload={"institution":{"institution_type":"training_institution","name":"Test new institution","email":"office@gamma.edu","logo_url":uploaded_logo},
                  "administrator":{"name":"Test admin","email":"admin@gamma.edu","password":"secure-test-password"}}
         response=self.request("POST","/institutions/register",None,json=payload)
         self.assertEqual(response.status_code,201,response.text)
         ident=response.json()["id"]
         self.assertEqual(self.db.get(Institution,3).logo_url,uploaded_logo)
+        self.assertEqual(self.db.get(Institution,3).institution_type,"training_institution")
+        self.assertEqual(response.json()["institution"]["institution_type"],"training_institution")
+        self.assertEqual(response.json()["institution"]["status"], "pending")
         self.assertEqual(response.json()["role"],"admin")
+        self.assertEqual(self.request("GET", "/users/", ident).status_code, 403)
+        # Platform review is covered separately. Activate this fixture so the
+        # remaining test can exercise training-institution behavior.
+        self.db.get(Institution,3).status = InstitutionStatus.active.value
+        self.db.commit()
         self.assertEqual(self.ids("/users/",ident),{ident})
+        self.assertEqual(self.request("POST", "/institutions/departments", ident,
+                                      json={"name": "Web Development"}).status_code, 201)
+        learner = {"name": "Training learner", "email": "learner@gamma.edu", "password": "secure-training-password",
+                   "department": "Web Development", "institutional_id": "LEARN-001"}
+        created_learner = self.request("POST", "/auth/register", ident, json=learner)
+        self.assertEqual(created_learner.status_code, 201, created_learner.text)
+        self.assertIsNone(created_learner.json()["semester_number"])
+        trainer = {**learner, "name": "Training trainer", "email": "trainer@gamma.edu", "institutional_id": "TRAIN-001"}
+        created_trainer = self.request("POST", "/auth/register-faculty", ident, json=trainer)
+        self.assertEqual(created_trainer.status_code, 201)
+        training_course = {"name": "Full Stack Development", "code": "FSD-SEP-26",
+                           "department": "Web Development", "batch": "September 2026",
+                           "enrollment_mode": "compulsory",
+                           "recording_drive_folder_id": "Folder_1234567890"}
+        self.assertEqual(self.request("POST", "/courses/", created_trainer.json()["id"],
+                                      json={**training_course, "code": "BAD-DRIVE",
+                                            "recording_drive_folder_id": "bad"}).status_code, 422)
+        with patch("app.routers.courses.validate_drive_folder", return_value={"id": "Folder_1234567890", "name": "Recordings"}):
+            created_batch = self.request("POST", "/courses/", created_trainer.json()["id"], json=training_course)
+        self.assertEqual(created_batch.status_code, 201, created_batch.text)
+        self.assertEqual(created_batch.json()["batch"], "September 2026")
+        self.assertTrue(created_batch.json()["recording_drive_folder_configured"])
+        self.assertNotIn("recording_drive_folder_id", created_batch.text)
+        self.assertNotIn("Folder_1234567890", created_batch.text)
+        self.assertIn(created_batch.json()["id"], self.ids("/courses/enrolled", created_learner.json()["id"]))
+        self.assertEqual(self.request("POST", "/auth/register-hod", ident,
+                                      json={**trainer, "email": "hod@gamma.edu", "institutional_id": "HOD-001"}).status_code, 403)
+        self.assertEqual(self.request("POST", "/users/students/promote", ident, json={
+            "department": "Web Development", "program": "Training", "batch": "2026",
+            "from_semester": 1, "to_semester": 2}).status_code, 403)
         self.assertNotIn("password",response.text)
         self.assertEqual(self.request("POST","/institutions/register",None,json=payload).status_code,409)
         self.assertEqual(self.db.query(Institution).count(),3)

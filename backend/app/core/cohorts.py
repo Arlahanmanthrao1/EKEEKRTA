@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.models.course import Course, Enrollment
 from app.models.user import User, UserRole
+from app.models.institution import InstitutionType
 
 
 def _same(left, right):
@@ -13,11 +14,15 @@ def student_matches_course(student: User, course: Course) -> bool:
     """A populated course target is mandatory; blank targets mean all values."""
     if student.role != UserRole.student or student.institution_id != course.institution_id:
         return False
-    for attribute in ("department", "program", "batch", "section"):
+    attributes = ("department",) if (
+        student.institution and student.institution.institution_type == InstitutionType.training_institution.value
+    ) else ("department", "program", "batch", "section")
+    for attribute in attributes:
         target = getattr(course, attribute, None)
         if target and not _same(getattr(student, attribute, None), target):
             return False
-    return course.semester_number is None or student.semester_number == course.semester_number
+    return (student.institution and student.institution.institution_type == InstitutionType.training_institution.value
+            or course.semester_number is None or student.semester_number == course.semester_number)
 
 
 def enroll_student_if_needed(db: Session, student: User, course: Course) -> bool:

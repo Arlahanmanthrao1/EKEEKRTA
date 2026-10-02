@@ -27,8 +27,6 @@ class Submission(Base):
     file_url = Column(String, nullable=True)
     submitted_at = Column(DateTime(timezone=True), server_default=func.now())
     marks_obtained = Column(Float, nullable=True)
-    # Populated later by the embedding-similarity plagiarism checker (Phase 2).
-    plagiarism_score = Column(Float, nullable=True)
 
     assignment = relationship("Assignment", back_populates="submissions")
     student = relationship("User")

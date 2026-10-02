@@ -20,6 +20,14 @@ class Settings(BaseSettings):
     # Host path mapped to Jibri's finalized /storage recordings directory.
     jibri_recordings_dir: str = ""
     jibri_recording_max_mb: int = Field(default=10000, ge=100, le=50000)
+    # Trainers authorize their own Google Drive account. Refresh tokens remain
+    # encrypted on the backend; the browser only receives short-lived tokens
+    # for Google's folder picker.
+    google_drive_oauth_client_id: str = ""
+    google_drive_oauth_client_secret: SecretStr = SecretStr("")
+    google_drive_oauth_redirect_uri: str = "http://127.0.0.1:8000/integrations/google-drive/callback"
+    google_drive_frontend_return_url: str = "http://127.0.0.1:5173/faculty/create-course"
+    google_drive_upload_chunk_mb: int = Field(default=8, ge=1, le=64)
     # Zero disables expiry; an institution must explicitly approve a policy.
     recording_retention_days: int = Field(default=0, ge=0, le=3650)
     # Optional institution-built model executables. Empty means unavailable;
@@ -29,6 +37,13 @@ class Settings(BaseSettings):
     native_slide_ocr_executable: str = ""
     native_slide_ocr_model_id: str = ""
     native_model_timeout_minutes: int = Field(default=120, ge=1, le=720)
+    # Short-command speech model. This is a separate reviewed executable from
+    # lecture transcription and never falls back to browser/cloud speech.
+    native_voice_model_executable: str = ""
+    native_voice_model_id: str = ""
+    native_voice_model_timeout_seconds: int = Field(default=30, ge=5, le=120)
+    native_voice_min_confidence: float = Field(default=0.65, ge=0, le=1)
+    voice_command_max_upload_mb: int = Field(default=8, ge=1, le=25)
 
     video_provider: Literal["jaas", "jitsi"] = "jaas"
     jitsi_domain: str = "meet.jit.si"

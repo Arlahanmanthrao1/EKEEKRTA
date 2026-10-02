@@ -73,7 +73,7 @@ export default function SettingsPage() {
       </section>}
       {user.role === "admin" && <section className="card panel-card settings-card">
         <p className="section-eyebrow">Institution controls</p><h2 className="section-title">Grading rules</h2>
-        <p className="settings-description">These official rules control every student CGPA projection. They do not alter ERP marks.</p>
+        <p className="settings-description">These official rules control every student CGPA projection. They do not alter marks or academic records.</p>
         <form className="form-grid" onSubmit={saveGrading}><label className="field-label">CGPA scale maximum<input className="field" type="number" min="4" max="100" step="0.01" value={grading.grading_scale_max} onChange={event => setGrading(current => ({ ...current, grading_scale_max: event.target.value }))} required /></label><label className="field-label">Passing grade point<input className="field" type="number" min="0" max={grading.grading_scale_max} step="0.01" value={grading.passing_grade_point} onChange={event => setGrading(current => ({ ...current, passing_grade_point: event.target.value }))} required /></label><div className="wide"><button className="btn btn-primary" disabled={busy}>{busy ? "Saving…" : "Save grading rules"}</button></div></form>
       </section>}
     </div>

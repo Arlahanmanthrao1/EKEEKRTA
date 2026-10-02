@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, NavLink, useLocation, useParams } from "react-router-dom";
-import { dashboardNavigation, dashboardPath, studentPortalSections, studentSectionForPage } from "./navigation";
+import { dashboardPath, navigationFor, studentSectionsFor, studentSectionForPage } from "./navigation";
 import { BrandLogo, pageTitle } from "../../branding/Brand";
 
 const paths = {
@@ -11,6 +11,7 @@ const paths = {
   quiz: <><path d="M8.5 9a3.5 3.5 0 1 1 5.6 2.8c-1.3 1-2.1 1.5-2.1 3.2"/><path d="M12 19h.01"/><circle cx="12" cy="12" r="10"/></>,
   users: <><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></>,
   video: <><rect x="3" y="5" width="14" height="14" rx="2"/><path d="m17 10 4-3v10l-4-3"/></>,
+  mic: <><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3M9 21h6"/></>,
   upload: <><path d="M12 16V4m0 0L7 9m5-5 5 5"/><path d="M5 20h14"/></>,
   chart: <><path d="M4 19V9M10 19V5M16 19v-7M22 19V2"/></>,
   alert: <><path d="M10.3 2.9 1.8 17a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 2.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></>,
@@ -57,8 +58,9 @@ export default function DashboardShell({ user, title, roleLabel, onLogout, searc
   const page = activePage || routeParams.page || "dashboard";
   const { pathname } = useLocation();
   const mainRef = useRef(null);
-  const allNavItems = dashboardNavigation[user.role];
-  const studentSection = user.role === "student" ? studentSectionForPage(page) : null;
+  const allNavItems = navigationFor(user.role, user.institution?.institution_type);
+  const studentSections = studentSectionsFor(user.institution?.institution_type);
+  const studentSection = user.role === "student" ? studentSectionForPage(page, user.institution?.institution_type) : null;
   const navItems = studentSection?.items || allNavItems;
   const currentPage = allNavItems.find((item) => item.id === page);
   const initials = user.name.split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase();
@@ -115,7 +117,7 @@ export default function DashboardShell({ user, title, roleLabel, onLogout, searc
       <div className="portal-main">
         <header className={`portal-topbar ${user.role === "student" ? "student-portal-topbar" : ""}`}>
           <Link className="portal-brand" to={dashboardPath(user.role)}>{user.institution?.logo_url && !institutionLogoFailed ? <img className="institution-brand-logo" src={user.institution.logo_url} alt={`${institutionName} logo`} referrerPolicy="no-referrer" onError={() => setInstitutionLogoFailed(true)} /> : <span className="institution-fallback-logo" aria-hidden="true">{institutionInitials || "IN"}</span>}<span className="institution-heading"><strong>{institutionName}</strong><small>{roleLabel}</small></span></Link>
-          {user.role === "student" && <nav className="student-top-nav" aria-label="Student portal areas">{studentPortalSections.map(section => <Link key={section.id} to={dashboardPath("student", section.entry)} className={studentSection?.id === section.id ? "active" : ""} aria-current={studentSection?.id === section.id ? "location" : undefined}>{section.label}</Link>)}</nav>}
+          {user.role === "student" && <nav className="student-top-nav" aria-label="Student portal areas">{studentSections.map(section => <Link key={section.id} to={dashboardPath("student", section.entry)} className={studentSection?.id === section.id ? "active" : ""} aria-current={studentSection?.id === section.id ? "location" : undefined}>{section.label}</Link>)}</nav>}
           {onSearch && (
             <label className="search-box">
               <Icon name="search" size={18} />

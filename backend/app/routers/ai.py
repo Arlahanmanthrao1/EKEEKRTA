@@ -1,9 +1,12 @@
+import os
 import re
 import secrets
 from datetime import datetime, time, timedelta, timezone
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -11,12 +14,13 @@ from app.core.access import course_access, courses_query, student_access, tenant
 from app.core.cohorts import enroll_matching_compulsory_courses, enroll_matching_students
 from app.core.deps import get_current_user
 from app.core.security import hash_password
+from app.config import settings
 from app.database import get_db
 from app.models.ai import AIAction, AIAuditLog, AICGPAGoal, AIKnowledgeSource, AILectureContent, AITrainingExample
 from app.models.assignment import Assignment, Submission
 from app.models.attendance import Attendance, ClassSession
 from app.models.course import Course, Enrollment
-from app.models.institution import Department
+from app.models.institution import Department, InstitutionType
 from app.models.erp import ERPIntegration
 from app.models.programming import ProgrammingAssessment, ProgrammingSubmission
 from app.models.quiz import Question, Quiz, QuizAttempt
@@ -27,8 +31,9 @@ from app.native_ai.intent_model import model
 from app.native_ai.content_generator import ContentDraftError, build_assignment_draft, build_quiz_draft
 from app.native_ai.course_retrieval import retrieve
 from app.native_ai.progress_intelligence import build_progress_insights
+from app.native_ai.model_runtime import run_voice_command_model, voice_model_capabilities
 from app.schemas.ai import (AIBulkAccountsIn, AICapabilitiesOut, AIActionOut, AICGPAPlanIn, AICommandIn,
-                            AICommandOut, AICorrectionIn, AIContentDraftIn, AICourseQuestionIn,
+                            AICommandOut, AICorrectionIn, AIContentDraftIn, AICourseQuestionIn, AIVoiceCommandOut,
                             AIKnowledgePublicationIn, AIKnowledgeSourceIn, AI_INTENTS)
 
 router = APIRouter(prefix="/ai", tags=["native-ai"])
@@ -40,6 +45,13 @@ ROLE_INTENTS = {
     UserRole.admin: {"student_progress", "import_erp_students", "create_department", "create_course",
                      "bulk_create_accounts", "course_question", "help"},
 }
+
+
+def _available_intents(user: User) -> set[str]:
+    available = set(ROLE_INTENTS[user.role])
+    if user.institution.institution_type != InstitutionType.university.value:
+        available.discard("import_erp_students")
+    return available
 
 
 def _audit(db: Session, user: User, event: str, action_id: int | None, details: dict | None = None):
@@ -252,7 +264,7 @@ def _progress_payload(db: Session, user: User, command: AICommandIn) -> dict:
 def _build_action(db: Session, user: User, command: AICommandIn, intent: str, confidence: float) -> tuple[dict, dict, bool, str]:
     lowered = command.command.lower()
     if intent == "help":
-        names = sorted(ROLE_INTENTS[user.role] - {"help"})
+        names = sorted(_available_intents(user) - {"help"})
         return {}, {"available_actions": names}, False, "Here are the actions available for your role."
     if intent == "student_progress":
         progress = _progress_payload(db, user, command)
@@ -320,12 +332,26 @@ def capabilities(user: User = Depends(get_current_user)):
         "bulk_create_accounts": "Bulk-create student and faculty accounts",
         "course_question": "Ask questions using approved course sources",
     }
-    available = [{"intent": intent, "label": labels[intent]} for intent in sorted(ROLE_INTENTS[user.role])]
+    available = [{"intent": intent, "label": labels[intent]} for intent in sorted(_available_intents(user))]
     if user.role == UserRole.student:
         available.append({"intent": "cgpa_plan", "label": "Build a target-CGPA improvement roadmap"})
     available.append({"intent": "progress_insights", "label": "Review explainable progress and risk insights"})
     return {"engine": "EKEEKRTA Native Intent Model v1", "external_models": False,
             "capabilities": available}
+
+
+@router.get("/voice-capabilities")
+def voice_capabilities(user: User = Depends(get_current_user)):
+    result = voice_model_capabilities(settings.native_voice_model_executable,
+                                      settings.native_voice_model_id)
+    result.update({"maximum_upload_mb": settings.voice_command_max_upload_mb,
+                   "maximum_recording_seconds": 20,
+                   "accepted_formats": ["audio/webm", "audio/wav", "audio/ogg", "audio/mp4"],
+                   "confirmation_required_for_writes": True,
+                   "audio_retained": False,
+                   "reason": None if result["available"] else
+                       "An institution-reviewed EKEEKRTA voice model is not configured on this backend."})
+    return result
 
 
 @router.get("/progress-insights")
@@ -573,6 +599,8 @@ def cgpa_goal(db: Session = Depends(get_db), user: User = Depends(get_current_us
 def refresh_cgpa_goal_from_erp(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     if user.role != UserRole.student:
         raise HTTPException(403, "Only students can refresh a personal CGPA goal")
+    if user.institution.institution_type != InstitutionType.university.value:
+        raise HTTPException(403, "ERP result refresh is available only to university institutions")
     if not user.institutional_id:
         raise HTTPException(409, "Your profile needs an official institution ID before ERP refresh")
     goal = db.query(AICGPAGoal).filter(AICGPAGoal.institution_id == tenant(user),
@@ -618,7 +646,7 @@ def command(payload: AICommandIn, db: Session = Depends(get_db), user: User = De
     intent, confidence = model.predict(payload.command)
     if confidence < 0.36:
         intent = "help"
-    if intent not in ROLE_INTENTS[user.role]:
+    if intent not in _available_intents(user):
         _audit(db, user, "command_denied", None, {"intent": intent, "role": user.role.value})
         db.commit()
         raise HTTPException(403, "That AI action is not available for your role")
@@ -634,6 +662,82 @@ def command(payload: AICommandIn, db: Session = Depends(get_db), user: User = De
     db.commit()
     db.refresh(action)
     return {"message": message, "action": action}
+
+
+def _voice_audio_suffix(header: bytes) -> str | None:
+    if len(header) >= 12 and header[:4] == b"RIFF" and header[8:12] == b"WAVE":
+        return ".wav"
+    if header[:4] == b"\x1aE\xdf\xa3":
+        return ".webm"
+    if header[:4] == b"OggS":
+        return ".ogg"
+    if len(header) >= 12 and header[4:8] == b"ftyp":
+        return ".mp4"
+    return None
+
+
+async def _save_voice_audio(upload: UploadFile, target_directory: Path) -> Path:
+    maximum = settings.voice_command_max_upload_mb * 1024 * 1024
+    total, header = 0, b""
+    temporary = target_directory / "command.audio"
+    try:
+        with temporary.open("wb") as output:
+            while chunk := await upload.read(64 * 1024):
+                total += len(chunk)
+                if total > maximum:
+                    raise HTTPException(413, f"Voice recording exceeds the {settings.voice_command_max_upload_mb} MB limit")
+                if len(header) < 16:
+                    header += chunk[:16 - len(header)]
+                output.write(chunk)
+    finally:
+        await upload.close()
+    suffix = _voice_audio_suffix(header)
+    if not total or not suffix:
+        raise HTTPException(415, "Upload a valid WAV, WebM, OGG or MP4 audio recording")
+    final = temporary.with_suffix(suffix)
+    temporary.replace(final)
+    return final
+
+
+@router.post("/voice-commands", response_model=AIVoiceCommandOut, status_code=201)
+async def voice_command(audio: UploadFile = File(...),
+                        timezone_name: str = Form(default="Asia/Calcutta", max_length=80),
+                        course_id: int | None = Form(default=None, ge=1),
+                        student_id: int | None = Form(default=None, ge=1),
+                        db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    if os.getenv("VERCEL"):
+        raise HTTPException(503, "Voice commands require the private EKEEKRTA model worker; the public serverless backend cannot run it")
+    capability = voice_model_capabilities(settings.native_voice_model_executable,
+                                          settings.native_voice_model_id)
+    if not capability["available"]:
+        raise HTTPException(503, "The institution-reviewed EKEEKRTA voice model is not configured")
+    try:
+        with TemporaryDirectory(prefix="ekeekrta-voice-") as folder:
+            audio_path = await _save_voice_audio(audio, Path(folder))
+            recognized = run_voice_command_model(
+                audio_path, settings.native_voice_model_executable, settings.native_voice_model_id,
+                settings.native_voice_model_timeout_seconds)
+    except HTTPException:
+        raise
+    except RuntimeError as exc:
+        code = str(exc) if str(exc).startswith("voice_model_") else "voice_model_failed"
+        _audit(db, user, "voice_command_failed", None, {"error_code": code})
+        db.commit()
+        raise HTTPException(502, "The private voice model could not process this recording") from None
+    if recognized["confidence"] < settings.native_voice_min_confidence:
+        _audit(db, user, "voice_command_unclear", None,
+               {"confidence": recognized["confidence"], "model_id": recognized["model_id"]})
+        db.commit()
+        raise HTTPException(422, "The voice command was not clear enough. Please retry or type the command")
+    interpreted = command(AICommandIn(command=recognized["text"], course_id=course_id,
+                                      student_id=student_id, timezone=timezone_name), db, user)
+    _audit(db, user, "voice_command_interpreted", interpreted["action"].id,
+           {"confidence": recognized["confidence"], "language": recognized["language"],
+            "model_id": recognized["model_id"], "audio_retained": False})
+    db.commit()
+    return {**interpreted, "transcript": recognized["text"],
+            "speech_confidence": recognized["confidence"], "language": recognized["language"],
+            "model_id": recognized["model_id"]}
 
 
 @router.get("/actions", response_model=list[AIActionOut])
@@ -939,6 +1043,8 @@ def confirm(action_id: int, db: Session = Depends(get_db), user: User = Depends(
             result = {"quiz_id": record.id, "course_id": record.course_id, "title": record.title,
                       "question_count": len(questions)}
         elif action.intent == "import_erp_students":
+            if user.institution.institution_type != InstitutionType.university.value:
+                raise HTTPException(403, "ERP import is available only to university institutions")
             from app.routers.erp import confirm_user_import
             from app.schemas.erp import ERPUserImportConfirmIn
             imported = confirm_user_import(

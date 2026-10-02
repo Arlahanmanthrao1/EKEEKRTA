@@ -125,6 +125,12 @@ class AILectureRecording(Base):
     size_bytes = Column(BigInteger, nullable=False)
     sha256 = Column(String(64), nullable=False)
     status = Column(String(24), nullable=False, default="uploaded", server_default="uploaded")
+    drive_upload_status = Column(String(24), nullable=False, default="not_applicable",
+                                 server_default="not_applicable")
+    drive_file_id = Column(String(180), nullable=True)
+    drive_web_url = Column(String(2048), nullable=True)
+    drive_error_code = Column(String(80), nullable=True)
+    drive_uploaded_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     deleted_at = Column(DateTime(timezone=True), nullable=True)
 

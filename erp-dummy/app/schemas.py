@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 
@@ -37,6 +38,14 @@ class ERPStudentCreate(BaseModel):
     batch: str = Field(min_length=2, max_length=40)
     semester_number: int = Field(ge=1, le=8)
     section: str = Field(min_length=1, max_length=40)
+    parent_phone: str | None = Field(default=None, pattern=r"^\+[1-9][0-9]{7,14}$")
+    parent_whatsapp_opt_in: bool = False
+
+    @model_validator(mode="after")
+    def require_phone_for_whatsapp(self):
+        if self.parent_whatsapp_opt_in and not self.parent_phone:
+            raise ValueError("Parent WhatsApp opt-in requires an international phone number")
+        return self
 
 
 class ERPUserCreate(BaseModel):
@@ -51,11 +60,15 @@ class ERPUserCreate(BaseModel):
     batch: str | None = Field(default=None, max_length=40)
     semester_number: int | None = Field(default=None, ge=1, le=8)
     section: str | None = Field(default=None, max_length=40)
+    parent_phone: str | None = Field(default=None, pattern=r"^\+[1-9][0-9]{7,14}$")
+    parent_whatsapp_opt_in: bool = False
 
     @model_validator(mode="after")
     def require_student_cohort(self):
         if self.role == "student" and not all((self.program, self.batch, self.semester_number, self.section)):
             raise ValueError("Students require program, batch, semester and section")
+        if self.role == "student" and self.parent_whatsapp_opt_in and not self.parent_phone:
+            raise ValueError("Parent WhatsApp opt-in requires an international phone number")
         return self
 
 
@@ -152,3 +165,28 @@ class AttendanceSyncIn(BaseModel):
     class_session: SessionData
     attendance: AttendanceData
     occurred_at: datetime
+
+
+class OfflineAttendanceEntry(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    student_institutional_id: str = Field(min_length=2, max_length=120)
+    present: bool
+
+
+class OfflineAttendanceCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    submission_id: UUID
+    course_code: str = Field(min_length=1, max_length=120)
+    faculty_institutional_id: str = Field(min_length=2, max_length=120)
+    held_at: datetime
+    duration_minutes: int = Field(ge=1, le=480)
+    attendance: list[OfflineAttendanceEntry] = Field(min_length=1, max_length=500)
+
+    @model_validator(mode="after")
+    def unique_students(self):
+        if self.held_at.tzinfo is None or self.held_at.utcoffset() is None:
+            raise ValueError("Offline class date and time must include a timezone")
+        ids = [entry.student_institutional_id.casefold() for entry in self.attendance]
+        if len(ids) != len(set(ids)):
+            raise ValueError("Each student can appear only once in an offline attendance submission")
+        return self

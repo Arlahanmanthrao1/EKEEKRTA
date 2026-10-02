@@ -7,6 +7,8 @@ from fastapi import HTTPException
 from jose import jwt
 
 from app.config import settings
+from app.integrations.google_drive import drive_oauth_configured
+from app.models.institution import InstitutionType
 
 
 def meeting_connection(session, user, is_moderator: bool) -> dict:
@@ -27,12 +29,28 @@ def meeting_connection(session, user, is_moderator: bool) -> dict:
                                          "affiliation": "owner" if is_moderator else "member",
                                          "moderator": "true" if is_moderator else "false"}}}
         token = jwt.encode(claims, secret, algorithm="HS256")
+        automatic = settings.jitsi_auto_recording_enabled
+        recording_reason = None
+        if user.institution.institution_type == InstitutionType.training_institution.value:
+            batch = session.training_batch
+            course = session.course
+            destination = batch.recording_drive_folder_id if batch else course.recording_drive_folder_id if course else None
+            recording_owner = batch.trainer if batch else course.faculty if course else None
+            if not destination:
+                automatic = False
+                recording_reason = "The training batch has no Google Drive recording folder."
+            elif not drive_oauth_configured():
+                automatic = False
+                recording_reason = "Google Drive OAuth is not configured on the private recording worker."
+            elif not recording_owner or not recording_owner.google_drive_connection or recording_owner.google_drive_connection.revoked_at:
+                automatic = False
+                recording_reason = "The trainer must connect their personal Google Drive account."
         return dict(provider="jitsi", domain=domain,
                     script_url=f"https://{domain}/external_api.js",
                     room_name=session.jitsi_room_id, jwt=token, expires_at=expires_at,
-                    recording={"available": settings.jitsi_auto_recording_enabled,
-                               "auto_start": settings.jitsi_auto_recording_enabled and is_moderator,
-                               "mode": "file"})
+                    recording={"available": automatic,
+                               "auto_start": automatic and is_moderator,
+                               "mode": "file", "reason": recording_reason})
 
     app_id = settings.jaas_app_id.strip()
     key_id = settings.jaas_api_key_id.strip()
@@ -73,4 +91,5 @@ def meeting_connection(session, user, is_moderator: bool) -> dict:
                 script_url=f"https://8x8.vc/{app_id}/external_api.js",
                 room_name=f"{app_id}/{session.jitsi_room_id}",
                 jwt=token, expires_at=expires_at,
-                recording={"available": False, "auto_start": False, "mode": "file"})
+                recording={"available": False, "auto_start": False, "mode": "file",
+                           "reason": "Automatic server recording requires the self-hosted Jitsi and Jibri worker."})

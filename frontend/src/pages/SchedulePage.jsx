@@ -97,7 +97,7 @@ export default function SchedulePage() {
     } catch (error) { setError(error.message); return false; }
     finally { pending.current = false; setBusy(false); }
   }
-  return <DashboardShell user={user} title="Schedule class" roleLabel="Faculty" onLogout={logout}>
+  return <DashboardShell user={user} title="Schedule class" roleLabel={user.institution?.institution_type === "training_institution" ? "Trainer" : "Faculty"} onLogout={logout}>
     {error && <p className="error-banner" role="alert">{error} <button className="btn btn-soft" onClick={() => setReload(n => n + 1)}>Retry</button></p>}
     {notice && <p className="schedule-notice" role="status">{notice}</p>}
     {loading ? <p role="status">Loading your classes…</p> : <div className="schedule-layout"><ScheduleForm courses={courses} onSubmit={create} busy={busy} /><ScheduledClassList plans={plans} busy={busy} onStart={plan => act(plan, "start")} onCancel={plan => act(plan, "cancel")} /></div>}

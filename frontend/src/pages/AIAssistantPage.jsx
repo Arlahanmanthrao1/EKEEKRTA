@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import DashboardShell, { EmptyState, Icon } from "../components/dashboard/DashboardShell";
 import { apiFetch } from "../api/client";
 import { useAuth } from "../context/AuthContext";
@@ -77,6 +77,76 @@ function Value({ value }) {
   }
   if (typeof value === "object") return <Preview data={value} />;
   return String(value);
+}
+
+function VoiceCommandPanel({ capabilities, busy, onCompleted, onError }) {
+  const recorderRef = useRef(null);
+  const streamRef = useRef(null);
+  const chunksRef = useRef([]);
+  const timerRef = useRef(null);
+  const [recording, setRecording] = useState(false);
+  const [processing, setProcessing] = useState(false);
+  const [lastTranscript, setLastTranscript] = useState("");
+  const browserSupported = typeof navigator !== "undefined" && navigator.mediaDevices?.getUserMedia
+    && typeof MediaRecorder !== "undefined";
+
+  const releaseMicrophone = useCallback(() => {
+    if (timerRef.current) window.clearTimeout(timerRef.current);
+    timerRef.current = null;
+    streamRef.current?.getTracks().forEach(track => track.stop());
+    streamRef.current = null;
+  }, []);
+
+  useEffect(() => () => {
+    if (recorderRef.current?.state === "recording") recorderRef.current.stop();
+    releaseMicrophone();
+  }, [releaseMicrophone]);
+
+  const stop = () => {
+    if (recorderRef.current?.state === "recording") recorderRef.current.stop();
+  };
+
+  const start = async () => {
+    if (!browserSupported || !capabilities?.available) return;
+    setLastTranscript(""); onError("");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true }, video: false });
+      streamRef.current = stream; chunksRef.current = [];
+      const preferred = ["audio/webm;codecs=opus", "audio/ogg;codecs=opus", "audio/mp4"]
+        .find(type => MediaRecorder.isTypeSupported?.(type));
+      const recorder = new MediaRecorder(stream, preferred ? { mimeType: preferred } : undefined);
+      recorderRef.current = recorder;
+      recorder.ondataavailable = event => { if (event.data?.size) chunksRef.current.push(event.data); };
+      recorder.onerror = () => { releaseMicrophone(); setRecording(false); onError("The browser could not record the microphone."); };
+      recorder.onstop = async () => {
+        setRecording(false); releaseMicrophone();
+        const mimeType = recorder.mimeType || preferred || "audio/webm";
+        const blob = new Blob(chunksRef.current, { type: mimeType });
+        if (!blob.size) { onError("No voice audio was captured. Please retry."); return; }
+        setProcessing(true);
+        try {
+          const extension = mimeType.includes("ogg") ? "ogg" : mimeType.includes("mp4") ? "mp4" : mimeType.includes("wav") ? "wav" : "webm";
+          const body = new FormData();
+          body.append("audio", blob, `voice-command.${extension}`);
+          body.append("timezone_name", Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Calcutta");
+          const response = await apiFetch("/ai/voice-commands", { method: "POST", body });
+          setLastTranscript(response.transcript); onCompleted(response);
+        } catch (requestError) { onError(requestError.message); }
+        finally { setProcessing(false); }
+      };
+      recorder.start(250); setRecording(true);
+      timerRef.current = window.setTimeout(stop, (capabilities.maximum_recording_seconds || 20) * 1000);
+    } catch (microphoneError) {
+      releaseMicrophone();
+      onError(microphoneError?.name === "NotAllowedError" ? "Microphone permission was denied." : "The microphone is unavailable.");
+    }
+  };
+
+  return <section className="panel ai-voice-panel" aria-labelledby="voice-command-title">
+    <div><p className="section-eyebrow">Private voice control</p><h3 id="voice-command-title">Speak an AI command</h3><p>Audio is processed only by the configured EKEEKRTA model and deleted immediately. Write actions still need visual confirmation.</p></div>
+    {!capabilities ? <p>Checking the private voice model…</p> : !capabilities.available ? <div className="ai-voice-unavailable"><Icon name="alert" size={18} /><span>{capabilities.reason}</span></div> : !browserSupported ? <div className="ai-voice-unavailable"><Icon name="alert" size={18} /><span>This browser does not support microphone recording.</span></div> : <div className="ai-voice-controls"><button type="button" className={`btn ${recording ? "btn-danger" : "btn-primary"}`} disabled={busy || processing} onClick={recording ? stop : start}><Icon name="mic" size={17} />{recording ? "Stop & process" : processing ? "Processing privately…" : "Start voice command"}</button><span>{recording ? `Listening · stops after ${capabilities.maximum_recording_seconds || 20} seconds` : `${capabilities.model_id} · local model`}</span></div>}
+    {lastTranscript && <p className="ai-voice-transcript"><strong>Recognized:</strong> “{lastTranscript}”</p>}
+  </section>;
 }
 
 function Preview({ data }) {
@@ -297,7 +367,7 @@ const cgpaStatus = {
   not_mathematically_reachable: "Not mathematically reachable",
 };
 
-export function CgpaPlannerPanel({ busy, onPlan, onRefreshERP, latestPlan, courses = [], initialGoal, gradingScale = 10, passingGrade = 4 }) {
+export function CgpaPlannerPanel({ busy, onPlan, onRefreshERP, latestPlan, courses = [], initialGoal, gradingScale = 10, passingGrade = 4, supportsERP = true }) {
   const [form, setForm] = useState({ grading_scale_max: gradingScale, current_cgpa: "", target_cgpa: "",
     completed_credits: "", remaining_credits: "", remaining_semesters: "", weekly_study_hours: "" });
   const [scenarioGrades, setScenarioGrades] = useState({});
@@ -321,7 +391,7 @@ export function CgpaPlannerPanel({ busy, onPlan, onRefreshERP, latestPlan, cours
   return <section className="panel ai-cgpa-panel">
     <div className="panel-title-row"><div><p className="section-eyebrow">Student Progress Intelligence · Stage 2</p><h2>Target CGPA planner</h2></div><span className="pill pill-info">Saved private goal</span></div>
     <p>Enter values from your latest official academic record. Your institution uses a {gradingScale}-point scale with {passingGrade} as the passing grade point.</p>
-    {initialGoal && <div className="cgpa-saved-goal"><span>Goal restored · last source: <strong>{initialGoal.data_source === "erp" ? "verified ERP" : "student entry"}</strong></span><button className="btn btn-soft" type="button" disabled={busy} onClick={onRefreshERP}>{busy ? "Refreshing…" : "Refresh official values from ERP"}</button></div>}
+    {initialGoal && <div className="cgpa-saved-goal"><span>Goal restored · last source: <strong>{initialGoal.data_source === "erp" ? "verified ERP" : "student entry"}</strong></span>{supportsERP && <button className="btn btn-soft" type="button" disabled={busy} onClick={onRefreshERP}>{busy ? "Refreshing…" : "Refresh official values from ERP"}</button>}</div>}
     <form className="form-grid ai-cgpa-form" onSubmit={submit}>
       <label className="field-label">Institution grading scale<input className="field" type="number" name="grading_scale_max" value={gradingScale} readOnly /></label>
       <label className="field-label">Current official CGPA<input className="field" type="number" name="current_cgpa" value={form.current_cgpa} onChange={update} min="0" max={form.grading_scale_max || 10} step="0.01" placeholder="7.20" required /></label>
@@ -331,7 +401,7 @@ export function CgpaPlannerPanel({ busy, onPlan, onRefreshERP, latestPlan, cours
       <label className="field-label">Semesters remaining<input className="field" type="number" name="remaining_semesters" value={form.remaining_semesters} onChange={update} min="1" max="16" step="1" placeholder="4" required /></label>
       <label className="field-label">Weekly study hours available<input className="field" type="number" name="weekly_study_hours" value={form.weekly_study_hours} onChange={update} min="1" max="112" step="0.5" placeholder="18" required /></label>
       <fieldset className="wide cgpa-scenario-fields"><legend>Current-course grade scenario (optional)</legend><p>See how expected results in this semester’s enrolled courses would affect your CGPA.</p>{courses.filter(course => course.course_type === "academic").map(course => <label className="field-label" key={course.id}>{course.code} · {course.name} <small>{course.credits ? `${course.credits} credits` : "credits not configured by faculty"}</small><input className="field" type="number" min="0" max={gradingScale} step="0.01" disabled={!course.credits} value={scenarioGrades[course.id] ?? ""} placeholder={`0–${gradingScale}`} onChange={event => setScenarioGrades(current => ({ ...current, [course.id]: event.target.value }))} /></label>)}</fieldset>
-      <div className="wide ai-content-submit"><small>Your entries are planning inputs. They do not overwrite official ERP grades.</small><button className="btn btn-primary" disabled={busy}>{busy ? "Calculating…" : "Create my roadmap"}</button></div>
+      <div className="wide ai-content-submit"><small>Your entries are planning inputs. They do not overwrite official marks or academic records.</small><button className="btn btn-primary" disabled={busy}>{busy ? "Calculating…" : "Create my roadmap"}</button></div>
     </form>
     {projection && <div className="cgpa-plan-result" aria-live="polite">
       <div className="cgpa-result-header"><div><p className="section-eyebrow">Latest calculation</p><h3>{cgpaStatus[projection.status] || projection.status}</h3></div><span className={`pill ${projection.status === "not_mathematically_reachable" ? "pill-risk" : projection.status === "achievable" || projection.status === "target_already_reached" ? "pill-ok" : "pill-warning"}`}>{cgpaStatus[projection.status]}</span></div>
@@ -350,9 +420,11 @@ export function CgpaPlannerPanel({ busy, onPlan, onRefreshERP, latestPlan, cours
 
 export default function AIAssistantPage() {
   const { user, logout } = useAuth();
+  const supportsERP = user.institution?.institution_type !== "training_institution";
   const [command, setCommand] = useState("");
   const [actions, setActions] = useState([]);
   const [capabilities, setCapabilities] = useState(null);
+  const [voiceCapabilities, setVoiceCapabilities] = useState(null);
   const [courses, setCourses] = useState([]);
   const [cgpaGoal, setCgpaGoal] = useState(null);
   const [message, setMessage] = useState("");
@@ -361,14 +433,14 @@ export default function AIAssistantPage() {
 
   const load = useCallback(async () => {
     try {
-      const [history, available, managedCourses, savedGoal] = await Promise.all([apiFetch("/ai/actions"), apiFetch("/ai/capabilities"),
+      const [history, available, voice, managedCourses, savedGoal] = await Promise.all([apiFetch("/ai/actions"), apiFetch("/ai/capabilities"), apiFetch("/ai/voice-capabilities"),
         apiFetch(user.role === "student" ? "/courses/enrolled" : "/courses/"),
         user.role === "student" ? apiFetch("/ai/cgpa-goal") : Promise.resolve({ goal: null })]);
-      setActions(history); setCapabilities(available); setCourses(managedCourses); setCgpaGoal(savedGoal.goal);
+      setActions(history); setCapabilities(available); setVoiceCapabilities(voice); setCourses(managedCourses); setCgpaGoal(savedGoal.goal);
     } catch (requestError) { setError(requestError.message); }
   }, [user.role]);
   useEffect(() => { load(); }, [load]);
-  const suggestions = useMemo(() => examples[user.role] || [], [user.role]);
+  const suggestions = useMemo(() => (examples[user.role] || []).filter(suggestion => supportsERP || !suggestion.includes("ERP")), [user.role, supportsERP]);
 
   const submit = async event => {
     event.preventDefault();
@@ -435,6 +507,11 @@ export default function AIAssistantPage() {
     } catch (requestError) { setError(requestError.message); }
     finally { setBusy(false); }
   };
+  const voiceCompleted = response => {
+    setActions(current => [response.action, ...current.filter(item => item.id !== response.action.id)]);
+    setMessage(`Recognized with ${Math.round(response.speech_confidence * 100)}% confidence. ${response.message}`);
+    setError("");
+  };
 
   return <DashboardShell user={user} title="AI Assistant" roleLabel={roleLabels[user.role]} onLogout={logout} activePage="ai-assistant">
     <section className="ai-hero">
@@ -448,11 +525,11 @@ export default function AIAssistantPage() {
       <textarea id="ai-command" rows="4" value={command} onChange={event => setCommand(event.target.value)} placeholder="For example: Schedule a Cloud Computing class tomorrow at 10:30 AM" maxLength="2000" />
       <div className="ai-composer-footer"><small>Write the exact course name or code when the action concerns a course.</small><button className="btn btn-primary" disabled={busy || command.trim().length < 3}>{busy ? "Working…" : "Preview with AI"}</button></div>
     </form>
+    <VoiceCommandPanel capabilities={voiceCapabilities} busy={busy} onCompleted={voiceCompleted} onError={setError} />
     <div className="ai-suggestions" aria-label="Example commands">{suggestions.map(suggestion => <button type="button" key={suggestion} onClick={() => setCommand(suggestion)}>{suggestion}</button>)}</div>
     <CourseKnowledgePanel courses={courses} role={user.role} />
-    {user.role === "student" && <CgpaPlannerPanel busy={busy} onPlan={createCgpaPlan} onRefreshERP={refreshCgpaFromERP} latestPlan={actions.find(action => action.intent === "cgpa_plan")} courses={courses} initialGoal={cgpaGoal} gradingScale={user.institution?.grading_scale_max || 10} passingGrade={user.institution?.passing_grade_point || 4} />}
+    {user.role === "student" && <CgpaPlannerPanel busy={busy} onPlan={createCgpaPlan} onRefreshERP={refreshCgpaFromERP} latestPlan={actions.find(action => action.intent === "cgpa_plan")} courses={courses} initialGoal={cgpaGoal} gradingScale={user.institution?.grading_scale_max || 10} passingGrade={user.institution?.passing_grade_point || 4} supportsERP={supportsERP} />}
     {user.role === "faculty" && <FacultyContentDraftPanel courses={courses} busy={busy} onPreview={previewContentDraft} />}
-    <div className="ai-voice-note"><Icon name="alert" size={18} /><span>Voice control will be enabled only after EKEEKRTA’s own speech model is ready; browser cloud speech is intentionally not used.</span></div>
     {user.role === "admin" && <BulkAccountsPanel busy={busy} onPreview={previewBulkAccounts} />}
     {error && <div className="error-banner" role="alert">{error}</div>}
     {message && <div className="success-banner" role="status">{message}</div>}

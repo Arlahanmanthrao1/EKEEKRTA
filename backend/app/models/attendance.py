@@ -9,6 +9,7 @@ class ClassSession(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     course_id = Column(Integer, ForeignKey("courses.id"), nullable=False)
+    training_batch_id = Column(Integer, ForeignKey("training_batches.id"), nullable=True, index=True)
     jitsi_room_id = Column(String, nullable=False, unique=True)
     scheduled_at = Column(DateTime(timezone=True), server_default=func.now())
     recording_url = Column(String, nullable=True)
@@ -18,6 +19,7 @@ class ClassSession(Base):
     fullscreen_required = Column(Boolean, default=True, nullable=False)
 
     course = relationship("Course")
+    training_batch = relationship("TrainingBatch")
     attendance_records = relationship("Attendance", back_populates="session")
 
 

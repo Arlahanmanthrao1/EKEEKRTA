@@ -35,4 +35,3 @@ class SubmissionOut(BaseModel):
     student_id: int
     file_url: str | None = None
     marks_obtained: float | None = None
-    plagiarism_score: float | None = None

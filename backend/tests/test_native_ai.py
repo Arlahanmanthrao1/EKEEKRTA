@@ -23,12 +23,13 @@ from app.models.ai import (AIAction, AIAuditLog, AICGPAGoal, AIKnowledgeSource,
                            AILectureContent, AILecturePreparationJob,
                            AILectureRecording, AITrainingExample)
 from app.models.erp import ERPIntegration
-from app.models.institution import Department, Institution
+from app.models.institution import Department, Institution, InstitutionType
 from app.native_ai.intent_model import model
-from app.native_ai.model_runtime import run_slide_ocr, run_speech_model
+from app.native_ai.model_runtime import run_slide_ocr, run_speech_model, run_voice_command_model
 from app.native_ai.recording_ingest import ingest_jibri_recording
 from app.native_ai.recording_retention import purge_expired_recordings
-from app.native_ai.recording_worker import process_next_recording_job
+from app.native_ai.recording_worker import process_next_recording_job, upload_training_recording
+from app.integrations.google_drive import extract_drive_folder_id
 from app.config import settings
 from app.routers import ai, lectures
 
@@ -105,6 +106,15 @@ class NativeAITest(unittest.TestCase):
         self.assertEqual(confirmed.status_code, 200, confirmed.text)
         account = self.db.query(User).filter_by(institutional_id="EMP-AI").one()
         self.assertEqual(account.role, UserRole.faculty)
+
+    def test_training_institution_ai_does_not_offer_or_execute_erp_actions(self):
+        self.db.get(Institution, 2).institution_type = InstitutionType.training_institution.value
+        self.db.commit()
+        capabilities = self.request("GET", "/ai/capabilities", user=6)
+        self.assertEqual(capabilities.status_code, 200, capabilities.text)
+        self.assertNotIn("import_erp_students", {item["intent"] for item in capabilities.json()["capabilities"]})
+        denied = self.command("Import users from ERP based on role", user=6)
+        self.assertEqual(denied.status_code, 403, denied.text)
 
     def test_schedule_requires_preview_and_explicit_confirmation(self):
         tomorrow = (datetime.now(timezone.utc) + timedelta(days=1)).date().isoformat()
@@ -448,6 +458,46 @@ class NativeAITest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "invalid_segments"):
                 run_speech_model(audio, str(executable), "ekeekrta-stt-test-v1", 30, bad_runner)
 
+    def test_private_voice_model_creates_only_a_reviewed_command_preview(self):
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            executable = root / "ekeekrta-voice.exe"
+            executable.write_bytes(b"private-test-binary")
+            audio = root / "voice.wav"
+            audio.write_bytes(b"RIFF0000WAVE-private-test")
+
+            def voice_runner(arguments, **options):
+                self.assertFalse(options["shell"])
+                Path(arguments[-1]).write_text(json.dumps({
+                    "schema_version": 1, "language": "en", "confidence": 0.94,
+                    "text": "Schedule Cloud Computing tomorrow at 10:30 AM",
+                }), encoding="utf-8")
+
+            recognized = run_voice_command_model(audio, str(executable), "ekeekrta-voice-test-v1", 30,
+                                                 voice_runner)
+            self.assertEqual(recognized["confidence"], 0.94)
+            self.assertIn("Cloud Computing", recognized["text"])
+            self.assertEqual(list(root.glob(".voice-*.json")), [])
+
+            captured_paths = []
+            def fake_voice_model(path, *_args):
+                captured_paths.append(path)
+                return recognized
+
+            with patch.object(settings, "native_voice_model_executable", str(executable)), \
+                 patch.object(settings, "native_voice_model_id", "ekeekrta-voice-test-v1"), \
+                 patch("app.routers.ai.run_voice_command_model", side_effect=fake_voice_model):
+                response = self.request("POST", "/ai/voice-commands", files={
+                    "audio": ("command.wav", b"RIFF0000WAVE-private-command", "audio/wav")},
+                    data={"timezone_name": "Asia/Calcutta"})
+            self.assertEqual(response.status_code, 201, response.text)
+            self.assertEqual(response.json()["action"]["status"], "draft")
+            self.assertTrue(response.json()["action"]["requires_confirmation"])
+            self.assertEqual(response.json()["transcript"], recognized["text"])
+            self.assertTrue(captured_paths)
+            self.assertFalse(captured_paths[0].exists(), "Raw command audio must be deleted after inference")
+            self.assertEqual(self.db.query(ScheduledClass).count(), 0)
+
     def test_private_worker_creates_review_draft_from_configured_local_model(self):
         self.db.add(ClassSession(id=46, course_id=1, jitsi_room_id="model-ended",
                                  ended_at=datetime.now(timezone.utc)))
@@ -535,6 +585,39 @@ class NativeAITest(unittest.TestCase):
             self.assertEqual(applied["deleted"], 1)
             self.assertEqual(list(private.glob("*.mp4")), [])
             self.assertEqual(self.db.get(AILectureRecording, item.id).status, "expired")
+
+    def test_training_recording_uses_only_valid_drive_folder_and_tracks_upload(self):
+        self.assertEqual(extract_drive_folder_id(
+            "https://drive.google.com/drive/folders/Folder_1234567890?usp=sharing"), "Folder_1234567890")
+        self.assertIsNone(extract_drive_folder_id("https://example.com/drive/folders/Folder_1234567890"))
+        institution = self.db.get(Institution, 1)
+        institution.institution_type = InstitutionType.training_institution.value
+        course = self.db.get(Course, 1)
+        course.recording_drive_folder_id = "Folder_1234567890"
+        with TemporaryDirectory() as folder, patch.object(settings, "recording_storage_dir", folder):
+            source = Path(folder) / ("a" * 32 + ".mp4")
+            source.write_bytes(b"private recording")
+            payload = source.read_bytes()
+            recording = AILectureRecording(institution_id=1, course_id=1, session_id=91,
+                uploaded_by=1, original_filename="training-class.mp4", content_type="video/mp4",
+                storage_key=source.name, size_bytes=source.stat().st_size, sha256=hashlib.sha256(payload).hexdigest(),
+                status="preparation_queued", drive_upload_status="pending")
+            self.db.add(recording); self.db.commit()
+            received = {}
+            def fake_upload(db, trainer_id, path, filename, content_type, folder_id):
+                received.update(db=db, trainer_id=trainer_id, path=path, filename=filename,
+                                content_type=content_type, folder_id=folder_id)
+                return {"file_id": "DriveFile_123456789", "web_url": "https://drive.google.com/file/d/DriveFile_123456789/view"}
+            result = upload_training_recording(self.db, recording, fake_upload)
+        self.assertEqual(result["status"], "uploaded")
+        self.assertEqual(received["folder_id"], "Folder_1234567890")
+        self.assertEqual(received["trainer_id"], 1)
+        saved = self.db.get(AILectureRecording, recording.id)
+        self.assertEqual(saved.drive_upload_status, "uploaded")
+        self.assertEqual(saved.drive_file_id, "DriveFile_123456789")
+        self.assertIsNotNone(saved.drive_uploaded_at)
+        self.assertEqual(self.db.query(AIAuditLog).filter_by(
+            event_type="training_recording_uploaded_to_drive").count(), 1)
 
     def test_stage_four_rejects_false_audio_origin_and_weak_transcript(self):
         self.db.add(ClassSession(id=43, course_id=1, jitsi_room_id="lecture-second",

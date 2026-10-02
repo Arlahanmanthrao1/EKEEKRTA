@@ -28,6 +28,37 @@ def model_capabilities(speech_executable: str, speech_model_id: str,
     }
 
 
+def voice_model_capabilities(executable: str, model_id: str) -> dict:
+    return {"available": bool(_executable_path(executable) and model_id.strip()),
+            "model_id": model_id.strip() if model_id.strip() else None,
+            "local_only": True, "cloud_fallback": False}
+
+
+def run_voice_command_model(audio_path: Path, executable: str, model_id: str,
+                            timeout_seconds: int, runner=subprocess.run) -> dict:
+    """Run an institution-reviewed short-command speech executable."""
+    binary = _executable_path(executable)
+    if not binary or not model_id.strip():
+        raise RuntimeError("voice_model_unavailable")
+    output = audio_path.parent / f".voice-{uuid.uuid4().hex}.json"
+    try:
+        runner([str(binary), "--input-audio", str(audio_path), "--output-json", str(output)],
+               check=True, timeout=timeout_seconds, stdout=subprocess.DEVNULL,
+               stderr=subprocess.DEVNULL, shell=False)
+        payload = _read_output(output)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        raise RuntimeError("voice_model_execution_failed") from None
+    finally:
+        output.unlink(missing_ok=True)
+    confidence = payload.get("confidence")
+    if (not isinstance(confidence, (int, float)) or isinstance(confidence, bool)
+            or not 0 <= confidence <= 1):
+        raise RuntimeError("voice_model_invalid_confidence")
+    return {"text": _clean_text(payload.get("text"), 2000),
+            "language": _clean_text(payload.get("language", "unknown"), 40),
+            "confidence": round(float(confidence), 4), "model_id": model_id.strip()}
+
+
 def _read_output(path: Path) -> dict:
     if not path.is_file() or path.stat().st_size == 0 or path.stat().st_size > 5 * 1024 * 1024:
         raise RuntimeError("model_output_missing_or_too_large")

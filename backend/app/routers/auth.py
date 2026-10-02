@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.database import get_db
 from app.models.user import User, UserRole
+from app.models.institution import InstitutionType
 from app.schemas.user import UserCreate, UserOut, UserSessionOut
 from app.schemas.auth import ForgotPassword, GoogleLogin, PasswordChange, PasswordReset, Token
 from app.config import settings
@@ -20,7 +21,7 @@ from app.models.password_reset import PasswordResetToken
 from app.core.google_login import google_browser_context, verify_google_credential
 from app.core.password_mail import recovery_email_enabled, send_password_reset_email
 from app.core.security import hash_password, verify_password, create_access_token
-from app.core.deps import get_authenticated_user, get_current_user, require_roles
+from app.core.deps import ensure_institution_active, get_authenticated_user, get_current_user, require_roles
 
 from app.core.access import tenant, department_name
 from app.core.cohorts import enroll_matching_compulsory_courses
@@ -54,17 +55,20 @@ def register_faculty(
 @router.post("/register-hod", response_model=UserOut, status_code=201)
 def register_hod(user_in: UserCreate, db: Session = Depends(get_db),
                  admin: User = Depends(require_roles(UserRole.admin))):
+    if admin.institution.institution_type == InstitutionType.training_institution.value:
+        raise HTTPException(403, "Training institutions do not use HOD accounts")
     return _create_account(user_in, UserRole.hod, db, admin)
 
 
 def _create_account(user_in: UserCreate, role: UserRole, db: Session, admin: User):
     institution_id = tenant(admin)
+    is_training = admin.institution.institution_type == InstitutionType.training_institution.value
     if user_in.email.split("@")[-1] != admin.institution.email_domain:
         raise HTTPException(422, f"Email must belong to the {admin.institution.email_domain} domain")
     department = department_name(db, admin, user_in.department)
     if not user_in.institutional_id:
         raise HTTPException(422, "Faculty, HOD and student accounts require an official institution ID")
-    if role == UserRole.student and (
+    if role == UserRole.student and not is_training and (
         not user_in.program or not user_in.batch or user_in.semester_number is None or not user_in.section
     ):
         raise HTTPException(422, "Student accounts require registration ID, program, batch, semester and section")
@@ -83,10 +87,10 @@ def _create_account(user_in: UserCreate, role: UserRole, db: Session, admin: Use
         hashed_password=hash_password(user_in.password),
         role=role,
         department=department,
-        program=user_in.program if role == UserRole.student else None,
-        batch=user_in.batch if role == UserRole.student else None,
-        semester_number=user_in.semester_number if role == UserRole.student else None,
-        section=user_in.section if role == UserRole.student else None,
+        program=user_in.program if role == UserRole.student and not is_training else None,
+        batch=user_in.batch if role == UserRole.student and not is_training else None,
+        semester_number=user_in.semester_number if role == UserRole.student and not is_training else None,
+        section=user_in.section if role == UserRole.student and not is_training else None,
         institutional_id=user_in.institutional_id,
         institution_id=institution_id,
     )
@@ -113,17 +117,40 @@ def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db
     user = query.first()
     if not user or not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Incorrect email or password")
+    if user.role == UserRole.platform_admin:
+        raise HTTPException(status_code=403, detail="Use the Ekeekrta team sign-in page.")
 
     return login_token(user, host)
 
 
 def login_token(user: User, host: str | None):
-    tenant(user)
+    if user.role == UserRole.platform_admin:
+        if user.institution_id is not None or host:
+            raise HTTPException(status_code=403, detail="Platform operators can only sign in from the main Ekeekrta site.")
+    else:
+        tenant(user)
+        ensure_institution_active(user)
     claims = {"sub": str(user.id), "role": user.role.value, "session_version": int(user.session_version or 0)}
     if host:
         claims["login_host"] = host
     token = create_access_token(data=claims)
     return Token(access_token=token)
+
+
+@router.post("/platform-login", response_model=Token)
+def platform_login(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    """Dedicated, tenant-free sign-in for Ekeekrta operations staff."""
+    host = request_login_host(request)
+    if host:
+        raise HTTPException(403, "Ekeekrta team sign-in is unavailable on an institution address.")
+    user = db.query(User).filter(
+        func.lower(User.email) == form_data.username.strip().lower(),
+        User.role == UserRole.platform_admin,
+        User.institution_id.is_(None),
+    ).first()
+    if not user or not verify_password(form_data.password, user.hashed_password):
+        raise HTTPException(status_code=401, detail="Incorrect email or password")
+    return login_token(user, None)
 
 
 @router.get("/password-recovery/config")

@@ -1,0 +1,101 @@
+prompt_id,group,intent,role,instruction,text
+V001,command,schedule_class,faculty,Read naturally,Schedule a class for Cloud Computing tomorrow at ten AM
+V002,command,schedule_class,faculty,Read naturally,Plan a meeting for Data Structures on Monday at two PM
+V003,command,schedule_class,faculty,Read naturally,Schedule the Machine Learning lecture for Friday at eleven thirty AM
+V004,command,schedule_class,faculty,Read naturally,Create an online class for Database Management Systems today at four PM
+V005,command,schedule_class,faculty,Read naturally,Arrange a CS101 class next Tuesday at nine AM
+V006,command,schedule_class,faculty,Read naturally,Book an online class for Operating Systems on the fifteenth of October at three PM
+V007,command,schedule_class,faculty,Read naturally,Set up the Artificial Intelligence course meeting for tomorrow afternoon
+V008,command,schedule_class,faculty,Read naturally,Schedule Computer Networks at eight forty five AM on Wednesday
+V009,command,schedule_class,faculty,Read naturally,Plan the next DBMS301 lecture for Monday morning
+V010,command,schedule_class,faculty,Read naturally,Create a class meeting for Software Engineering at five thirty PM
+V011,command,schedule_class,faculty,Read naturally,Schedule a revision class for Mathematics on Saturday at ten fifteen AM
+V012,command,schedule_class,faculty,Read naturally,Arrange a one hour meeting for Web Technology tomorrow at noon
+V013,command,schedule_class,faculty,Read naturally,Schedule the Cyber Security lab for the twenty first of November at two thirty PM
+V014,command,schedule_class,faculty,Read naturally,Plan a Python Programming class for next Thursday at nine thirty AM
+V015,command,schedule_class,faculty,Read naturally,Set up a meeting for ML204 this evening at six PM
+V016,command,draft_assignment,faculty,Read naturally,Create an assignment on load balancing for Cloud Computing
+V017,command,draft_assignment,faculty,Read naturally,Draft a Data Structures assignment about binary search trees
+V018,command,draft_assignment,faculty,Read naturally,Prepare homework on database normalization for DBMS301
+V019,command,draft_assignment,faculty,Read naturally,Make an assignment about process scheduling for Operating Systems
+V020,command,draft_assignment,faculty,Read naturally,Create a twenty mark assignment on supervised learning
+V021,command,draft_assignment,faculty,Read naturally,Draft coursework about network security for Cyber Security
+V022,command,draft_assignment,faculty,Read naturally,Prepare an assignment on Java inheritance due next Friday
+V023,command,draft_assignment,faculty,Read naturally,Create homework for CS101 covering arrays and linked lists
+V024,command,draft_assignment,faculty,Read naturally,Set an assignment for Web Technology on responsive design
+V025,command,draft_assignment,faculty,Read naturally,Make a ten mark assignment about software testing
+V026,command,draft_assignment,faculty,Read naturally,Draft an assignment on cloud service models due on the thirtieth of September
+V027,command,draft_assignment,faculty,Read naturally,Prepare coursework for Artificial Intelligence about search algorithms
+V028,command,draft_quiz,faculty,Read naturally,Create a quiz on operating system deadlocks
+V029,command,draft_quiz,faculty,Read naturally,Draft ten multiple choice questions about machine learning
+V030,command,draft_quiz,faculty,Read naturally,Prepare a five question quiz for Cloud Computing
+V031,command,draft_quiz,faculty,Read naturally,Make a weekly test on database transactions
+V032,command,draft_quiz,faculty,Read naturally,Create a fifteen mark quiz about computer networks
+V033,command,draft_quiz,faculty,Read naturally,Build multiple choice questions on Python functions
+V034,command,draft_quiz,faculty,Read naturally,Draft a quiz for CS101 covering stacks and queues
+V035,command,draft_quiz,faculty,Read naturally,Prepare eight questions about cyber security threats
+V036,command,draft_quiz,faculty,Read naturally,Create a test on software development life cycle
+V037,command,draft_quiz,faculty,Read naturally,Make a quiz about HTML CSS and JavaScript
+V038,command,draft_quiz,faculty,Read naturally,Draft twelve questions on artificial neural networks
+V039,command,draft_quiz,faculty,Read naturally,Prepare a short test for ML204 on regression
+V040,query,student_progress,student,Read naturally,Show my attendance and marks
+V041,query,student_progress,student,Read naturally,How is my academic progress this semester
+V042,query,student_progress,student,Read naturally,Which subjects need my attention
+V043,query,student_progress,student,Read naturally,Show my performance in Cloud Computing
+V044,query,student_progress,faculty,Read naturally,Which students are below seventy five percent attendance
+V045,query,student_progress,faculty,Read naturally,Show the at risk students in CS101
+V046,query,student_progress,faculty,Read naturally,Give me progress insights for the Machine Learning course
+V047,query,student_progress,faculty,Read naturally,Check attendance and marks for the Data Structures students
+V048,query,student_progress,hod,Read naturally,Show learner progress for the Computer Science department
+V049,query,student_progress,hod,Read naturally,Analyse academic performance for semester four
+V050,query,student_progress,admin,Read naturally,Show students who require academic attention
+V051,query,student_progress,student,Read naturally,Explain why my attendance is marked at risk
+V052,query,course_question,student,Read naturally,Explain binary search trees from my course notes
+V053,query,course_question,student,Read naturally,What is the difference between TCP and UDP
+V054,query,course_question,student,Read naturally,Summarize the notes about cloud deployment models
+V055,query,course_question,student,Read naturally,Explain database normalization with an example
+V056,query,course_question,student,Read naturally,What does deadlock mean in Operating Systems
+V057,query,course_question,student,Read naturally,Give me the key points from the Machine Learning lesson
+V058,query,course_question,student,Read naturally,Help me understand Java polymorphism
+V059,query,course_question,student,Read naturally,Find the approved notes for Computer Networks
+V060,query,course_question,student,Read naturally,What topics should I revise for the CS101 quiz
+V061,query,course_question,student,Read naturally,Answer this question using only the published course material
+V062,command,create_department,admin,Read naturally,Create a Computer Science department
+V063,command,create_department,admin,Read naturally,Add the Department of Electronics and Communication Engineering
+V064,command,create_department,admin,Read naturally,Set up a new Mechanical Engineering department
+V065,command,create_course,admin,Read naturally,Create an academic course called Cloud Computing with code CS401
+V066,command,create_course,admin,Read naturally,Add Data Structures as a semester three course
+V067,command,create_course,faculty,Read naturally,Create a non academic course called Interview Preparation
+V068,command,create_course,admin,Read naturally,Register Machine Learning with course code ML204
+V069,command,bulk_create_accounts,admin,Read naturally,Create student accounts in bulk
+V070,command,bulk_create_accounts,admin,Read naturally,Open the bulk account builder
+V071,command,bulk_create_accounts,admin,Read naturally,Import faculty accounts from the reviewed CSV file
+V072,command,bulk_create_accounts,admin,Read naturally,Register many students using a CSV file
+V073,command,import_erp_students,admin,Read naturally,Import student profiles from the college ERP
+V074,command,import_erp_students,admin,Read naturally,Synchronize faculty and HOD accounts from the ERP
+V075,command,import_erp_students,admin,Read naturally,Import ERP users based on their approved roles
+V076,control,help,all,Read naturally,What can you do
+V077,control,help,all,Read naturally,Show me the available voice commands
+V078,control,help,all,Read naturally,Help me use the AI assistant
+V079,control,help,all,Read naturally,How does voice control work
+V080,control,help,all,Read naturally,Which actions can I perform
+V081,control,cancel,all,Read naturally,Cancel that request
+V082,control,refuse,all,Read naturally,No do not make that change
+V083,control,confirm,all,Read naturally,Yes the preview is correct
+V084,control,correction,all,Read naturally,Change the course to Data Structures
+V085,control,correction,all,Read naturally,Correct the time to eleven thirty AM
+V086,negative,unsupported,all,Read naturally,What is the weather today
+V087,negative,unsupported,all,Read naturally,Play my favourite music
+V088,negative,unsupported,all,Read naturally,Order lunch for the class
+V089,negative,unsupported,all,Read naturally,Send money to my friend
+V090,negative,unsupported,all,Read naturally,Open a shopping website
+V091,negative,conversation,all,Read naturally,I travelled to the city yesterday evening
+V092,negative,conversation,all,Read naturally,The room is quiet and the windows are open
+V093,negative,conversation,all,Read naturally,This sentence is not an application command
+V094,negative,conversation,all,Read naturally,We discussed the project during the afternoon
+V095,negative,conversation,all,Read naturally,My notebook is on the table beside the computer
+V096,acoustic,silence,all,Record five seconds without speaking,
+V097,acoustic,background_noise,all,Record five seconds of the room with a fan running,
+V098,acoustic,background_noise,all,Record five seconds of normal classroom background sound without private conversation,
+V099,acoustic,unknown_speech,all,Ask another consenting person to speak an unrelated sentence in the background,
+V100,acoustic,far_microphone,all,Read from approximately two metres away,Show me the available voice commands

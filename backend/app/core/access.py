@@ -4,6 +4,7 @@ from sqlalchemy import func, false, or_
 from app.models.user import User, UserRole
 from app.models.course import Course, Enrollment
 from app.models.institution import Department
+from app.models.institution import InstitutionType
 
 
 def tenant(user):
@@ -27,18 +28,26 @@ def department_name(db, user, value):
 def courses_query(db, user, catalog=False):
     query = db.query(Course).filter(Course.institution_id == tenant(user))
     if user.role == UserRole.faculty:
-        query = query.filter(Course.faculty_id == user.id)
+        if user.institution and user.institution.institution_type == InstitutionType.training_institution.value:
+            from app.models.training import TrainingBatch
+            query = query.filter(or_(
+                Course.faculty_id == user.id,
+                Course.id.in_(db.query(TrainingBatch.course_id).filter(TrainingBatch.trainer_id == user.id)),
+            ))
+        else:
+            query = query.filter(Course.faculty_id == user.id)
     elif user.role == UserRole.hod:
         query = query.filter(Course.department == user.department) if user.department else query.filter(false())
     elif user.role == UserRole.student:
         if catalog:
-            query = query.filter(
-                or_(Course.department.is_(None), func.lower(Course.department) == (user.department or "").lower()),
-                or_(Course.program.is_(None), func.lower(Course.program) == (user.program or "").lower()),
-                or_(Course.batch.is_(None), func.lower(Course.batch) == (user.batch or "").lower()),
-                or_(Course.section.is_(None), func.lower(Course.section) == (user.section or "").lower()),
-                or_(Course.semester_number.is_(None), Course.semester_number == user.semester_number),
-            )
+            query = query.filter(or_(Course.department.is_(None), func.lower(Course.department) == (user.department or "").lower()))
+            if not (user.institution and user.institution.institution_type == InstitutionType.training_institution.value):
+                query = query.filter(
+                    or_(Course.program.is_(None), func.lower(Course.program) == (user.program or "").lower()),
+                    or_(Course.batch.is_(None), func.lower(Course.batch) == (user.batch or "").lower()),
+                    or_(Course.section.is_(None), func.lower(Course.section) == (user.section or "").lower()),
+                    or_(Course.semester_number.is_(None), Course.semester_number == user.semester_number),
+                )
         else:
             query = query.filter(Course.id.in_(db.query(Enrollment.course_id).filter(Enrollment.student_id == user.id)))
     return query
@@ -50,6 +59,14 @@ def course_access(db, user, course_id, manage=False, catalog=False):
         raise HTTPException(404, "Course not found")
     if manage:
         allowed = user.role == UserRole.admin or (user.role == UserRole.faculty and course.faculty_id == user.id)
+        if (not allowed and user.role == UserRole.faculty and user.institution and
+                user.institution.institution_type == InstitutionType.training_institution.value):
+            from app.models.training import TrainingBatch
+            allowed = db.query(TrainingBatch.id).filter(
+                TrainingBatch.course_id == course.id,
+                TrainingBatch.trainer_id == user.id,
+                TrainingBatch.institution_id == tenant(user),
+            ).first() is not None
     else:
         allowed = courses_query(db, user, catalog).filter(Course.id == course_id).first() is not None
     if not allowed:
@@ -63,9 +80,17 @@ def users_query(db, user):
         query = query.filter(User.role.in_([UserRole.faculty, UserRole.student]))
         query = query.filter(User.department == user.department) if user.department else query.filter(false())
     elif user.role == UserRole.faculty:
-        query = query.filter(User.role == UserRole.student, User.id.in_(
-            db.query(Enrollment.student_id).join(Course).filter(
-                Course.faculty_id == user.id, Course.institution_id == tenant(user))))
+        if user.institution and user.institution.institution_type == InstitutionType.training_institution.value:
+            from app.models.training import TrainingBatch, TrainingBatchEnrollment
+            query = query.filter(User.role == UserRole.student, User.id.in_(
+                db.query(TrainingBatchEnrollment.student_id).join(TrainingBatch).filter(
+                    TrainingBatch.trainer_id == user.id,
+                    TrainingBatch.institution_id == tenant(user),
+                    TrainingBatchEnrollment.status.in_(["active", "completed"]))))
+        else:
+            query = query.filter(User.role == UserRole.student, User.id.in_(
+                db.query(Enrollment.student_id).join(Course).filter(
+                    Course.faculty_id == user.id, Course.institution_id == tenant(user))))
     elif user.role == UserRole.student:
         query = query.filter(User.id == user.id)
     return query

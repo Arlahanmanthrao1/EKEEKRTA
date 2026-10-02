@@ -24,6 +24,7 @@ class AttendanceOut(BaseModel):
 
 class ClassSessionCreate(BaseModel):
     course_id: int
+    training_batch_id: int | None = None
 
 
 class ClassSessionOut(BaseModel):
@@ -31,6 +32,7 @@ class ClassSessionOut(BaseModel):
 
     id: int
     course_id: int
+    training_batch_id: int | None = None
     jitsi_room_id: str
     scheduled_at: datetime
     recording_url: str | None = None

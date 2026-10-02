@@ -28,9 +28,9 @@ export async function apiFetch(path, options = {}) {
   return res.json();
 }
 
-export async function login(email, password) {
+export async function login(email, password, platform = false) {
   const body = new URLSearchParams({ username: email, password });
-  const res = await fetch(`${API_BASE_URL}/auth/login`, {
+  const res = await fetch(`${API_BASE_URL}${platform ? "/auth/platform-login" : "/auth/login"}`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded", ...institutionHeaders() },
     body,

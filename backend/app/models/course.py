@@ -17,6 +17,9 @@ class Course(Base):
     course_type = Column(String, nullable=False, default="academic", server_default="academic")
     program = Column(String, nullable=True)
     batch = Column(String, nullable=True)
+    # Legacy training records may still contain these fields. New training
+    # deliveries use TrainingBatch, which owns cohort and Drive configuration.
+    recording_drive_folder_id = Column(String(180), nullable=True)
     semester_number = Column(Integer, nullable=True)
     section = Column(String, nullable=True)
     enrollment_mode = Column(String, nullable=False, default="elective", server_default="elective")
@@ -26,6 +29,10 @@ class Course(Base):
 
     faculty = relationship("User", back_populates="courses_taught")
     enrollments = relationship("Enrollment", back_populates="course")
+
+    @property
+    def recording_drive_folder_configured(self):
+        return bool(self.recording_drive_folder_id)
 
 
 class Enrollment(Base):

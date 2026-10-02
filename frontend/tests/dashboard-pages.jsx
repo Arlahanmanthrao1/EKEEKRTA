@@ -26,7 +26,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { StaticRouter } from 'react-router-dom/server';
 import { Routes, Route, matchRoutes } from 'react-router-dom';
 import DashboardShell from '../src/components/dashboard/DashboardShell';
-import { dashboardNavigation, dashboardPath, isDashboardPage, studentPortalSections, studentSectionForPage } from '../src/components/dashboard/navigation';
+import { dashboardNavigation, dashboardPath, isDashboardPage, navigationFor, studentPortalSections, studentSectionForPage, studentSectionsFor, trainingStudentPortalSections } from '../src/components/dashboard/navigation';
 
 let count = 0;
 assert.ok(isDashboardPage('student', 'timetable'));
@@ -35,6 +35,9 @@ assert.ok(dashboardNavigation.student.some(item => item.id === 'subject-enrollme
 assert.equal(isDashboardPage('student', 'calendar'), false);
 for (const role of ['faculty', 'hod']) assert.ok(isDashboardPage(role, 'calendar'));
 assert.equal(isDashboardPage('admin', 'calendar'), false);
+assert.ok(isDashboardPage('admin', 'erp', 'university'));
+assert.equal(isDashboardPage('admin', 'erp', 'training_institution'), false);
+assert.ok(!navigationFor('admin', 'training_institution').some(item => item.id === 'erp'));
 assert.equal(monthDays(new Date(2024, 1, 1)).length, 35);
 assert.equal(monthDays(new Date(2026, 1, 1)).length, 35);
 assert.equal(monthDays(new Date(2026, 2, 1)).length, 42);
@@ -91,9 +94,10 @@ assert.ok(calendarHtml({events:[plannedEvent],role:'faculty'}).includes('Manage 
 assert.ok(calendarHtml({events:[plannedEvent],role:'faculty'}).includes('href="/faculty/schedule"'));
 console.log('PASS calendar dates, month/year boundaries, empty/loading/error states, escaped content and role links');
 for (const [role, items] of Object.entries(dashboardNavigation)) {
-  const pattern = `/${role}/:page?`;
+  const base = role === 'platform_admin' ? '/platform' : `/${role}`;
+  const pattern = `${base}/:page?`;
   assert.equal(new Set(items.map(item => item.id)).size, items.length);
-  assert.equal(dashboardPath(role), `/${role}`);
+  assert.equal(dashboardPath(role), base);
   for (const item of items) {
     const pathname = dashboardPath(role, item.id);
     const route = matchRoutes([{ path: pattern }], pathname);
@@ -140,6 +144,39 @@ assert.equal(isDashboardPage('student', 'register-faculty'), false);
 assert.equal(isDashboardPage('faculty', 'register-student'), false);
 assert.ok(dashboardNavigation.admin.some(item => item.id === 'register-student'));
 assert.equal(isDashboardPage('unknown'), false);
+const trainingAdminNavigation = navigationFor('admin', 'training_institution');
+assert.ok(trainingAdminNavigation.some(item => item.id === 'register-faculty' && item.label === 'Create trainer'));
+assert.ok(trainingAdminNavigation.some(item => item.id === 'departments' && item.label === 'Domains'));
+for (const hidden of ['register-hod', 'academic-progression', 'erp']) assert.ok(!trainingAdminNavigation.some(item => item.id === hidden));
+const trainingTrainerNavigation = navigationFor('faculty', 'training_institution');
+assert.ok(trainingTrainerNavigation.some(item => item.id === 'courses' && item.label === 'Programs'));
+assert.ok(trainingTrainerNavigation.some(item => item.id === 'create-course' && item.label === 'Create Program'));
+assert.ok(trainingTrainerNavigation.some(item => item.id === 'batches' && item.label === 'My Batches'));
+const trainingStudentNavigation = navigationFor('student', 'training_institution');
+for (const page of ['batches', 'assignments', 'quizzes', 'programming-assessments', 'notes', 'study-materials']) {
+  assert.ok(trainingStudentNavigation.some(item => item.id === page), `Training student page ${page}`);
+  assert.ok(isDashboardPage('student', page, 'training_institution'));
+}
+for (const hidden of ['academic-courses', 'academic-assignments', 'syllabus', 'non-academic-courses', 'non-academic-assignments', 'weekly-tests', 'non-academic-quizzes', 'non-academic-marks', 'leaderboard']) {
+  assert.ok(!trainingStudentNavigation.some(item => item.id === hidden), `Training student does not show ${hidden}`);
+  assert.equal(isDashboardPage('student', hidden, 'training_institution'), false);
+}
+assert.deepEqual(studentSectionsFor('training_institution').map(section => section.label), ['Home', 'Learning', 'AI Assistant']);
+assert.equal(trainingStudentPortalSections.length, 3);
+const trainingStudentShell = renderToStaticMarkup(
+  <StaticRouter location="/student/batches">
+    <Routes><Route path="/student/:page?" element={
+      <DashboardShell user={{name: 'Training Learner', role: 'student', department: 'Web Development', institution: {name: 'Test Academy', institution_type: 'training_institution'}}} title="LMS" roleLabel="Student" onLogout={() => {}}>
+        <p>Training student content</p>
+      </DashboardShell>
+    } /></Routes>
+  </StaticRouter>
+);
+assert.ok(trainingStudentShell.includes('>Learning</a>'));
+assert.ok(trainingStudentShell.includes('>Learning</span>'));
+assert.ok(trainingStudentShell.includes('href="/student/batches"'));
+assert.ok(!trainingStudentShell.includes('>Academics</a>'));
+assert.ok(!trainingStudentShell.includes('>Non Academics</a>'));
 const facultyCourseRoute = matchRoutes([{path:'/faculty/courses/:courseId'}], '/faculty/courses/17');
 assert.equal(facultyCourseRoute[0].params.courseId, '17');
 assert.equal(matchRoutes([{path:'/faculty/courses/:courseId'}], '/student/courses/17'), null);
@@ -163,6 +200,7 @@ assert.ok(programmingBuilder.includes('Python 3') && programmingBuilder.includes
 console.log('PASS programming-assessment route, navigation and faculty builder rendering');
 console.log(`PASS ${count} page URLs, sidebar links, active state, headings, and role-specific route matching`);
 const onboarding = renderToStaticMarkup(<StaticRouter location="/register-institution"><InstitutionRegistration /></StaticRouter>);
+for (const text of ['Institution type', 'University', 'Training institution', 'without ERP integration']) assert.ok(onboarding.includes(text));
 for (const text of ['Institution details', 'Administrator profile', 'Official institution email', 'Logo', 'Create institution and administrator']) {
   assert.ok(onboarding.toLowerCase().includes(text.toLowerCase()), text);
 }
@@ -185,6 +223,11 @@ for (const accountType of ['student', 'faculty', 'hod']) {
   }
   if (accountType !== 'student') assert.ok(html.includes('Official employee ID'));
 }
+const trainingStudentForm = renderToStaticMarkup(<AccountRegistrationForm institutionType="training_institution" accountType="student" departments={[{id: 1, name: 'Web Development'}]} onCreated={() => {}} />);
+for (const label of ['Register student', 'Domain', 'Official learner ID', 'Web Development']) assert.ok(trainingStudentForm.includes(label));
+for (const universityOnly of ['Program', 'Batch', 'Current semester', 'Section']) assert.ok(!trainingStudentForm.includes(universityOnly));
+const trainingTrainerForm = renderToStaticMarkup(<AccountRegistrationForm institutionType="training_institution" accountType="faculty" departments={[{id: 1, name: 'Data Science'}]} onCreated={() => {}} />);
+for (const label of ['Create trainer', 'Trainer', 'Domain', 'Official trainer ID', 'Data Science']) assert.ok(trainingTrainerForm.includes(label));
 const emptyForm = renderToStaticMarkup(<AccountRegistrationForm accountType="hod" departments={[]} onCreated={() => {}} />);
 assert.ok(emptyForm.includes('disabled=""'));
 assert.ok(emptyForm.includes('Create a department first'));
@@ -227,7 +270,7 @@ const knowledgeStudent = renderToStaticMarkup(<CourseKnowledgePanel role="studen
 assert.ok(knowledgeStudent.includes('Find a cited answer'));
 assert.ok(!knowledgeStudent.includes('Add approved source'));
 const facultyLecture = renderToStaticMarkup(<LectureNotesPanel courseId={1} sessions={[{id:4,ended_at:'2026-09-15T10:00:00Z'}]} manager />);
-for (const text of ['Lecture summaries', 'Verified lecture transcript', 'Prepare review draft', 'does not currently deliver recordings', 'Private class recordings', 'institution-reviewed EKEEKRTA model executable']) assert.ok(facultyLecture.includes(text));
+for (const text of ['Lecture summaries', 'Verified lecture transcript', 'Prepare review draft', 'Automatic delivery requires the private self-hosted Jitsi/Jibri worker', 'Private class recordings', 'institution-reviewed EKEEKRTA model executable']) assert.ok(facultyLecture.includes(text));
 const studentLecture = renderToStaticMarkup(<LectureNotesPanel courseId={1} sessions={[]} />);
 assert.ok(studentLecture.includes('Faculty has not published lecture notes'));
 assert.ok(!studentLecture.includes('Verified lecture transcript'));

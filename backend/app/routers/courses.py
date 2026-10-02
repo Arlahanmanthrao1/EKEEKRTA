@@ -5,6 +5,7 @@ from sqlalchemy.exc import IntegrityError
 from app.database import get_db
 from app.models.course import Course, Enrollment
 from app.models.user import User, UserRole
+from app.models.institution import InstitutionType
 from app.schemas.course import CourseCreate, CourseCreditsUpdate, CourseOut, EnrollmentOut
 from app.schemas.user import UserOut
 from app.core.deps import get_current_user, require_roles
@@ -12,6 +13,7 @@ from app.core.deps import get_current_user, require_roles
 from app.core.access import course_access, courses_query, department_name, tenant
 from app.core.cohorts import enroll_matching_students, student_matches_course
 from app.integrations.erp_client import sync_course_to_erp
+from app.integrations.google_drive import DriveUploadError, validate_drive_folder
 
 router = APIRouter(prefix="/courses", tags=["courses"])
 
@@ -27,16 +29,50 @@ def create_course(
         raise HTTPException(status_code=400, detail="Course code already exists")
 
     values = course_in.model_dump()
+    is_training = current_user.institution.institution_type == InstitutionType.training_institution.value
+    legacy_training_delivery = False
+    if not is_training and values["course_type"] == "academic" and (
+        not values["program"] or not values["batch"] or values["semester_number"] is None
+    ):
+        raise HTTPException(422, "Academic courses require program, batch and semester")
+    if is_training:
+        # A training course is a reusable program. Dates, trainer assignment,
+        # capacity and recording destination belong to TrainingBatch.
+        values["course_type"] = "academic"
+        values["enrollment_mode"] = "elective"
+        legacy_training_delivery = bool(values.get("batch") or values.get("recording_drive_folder_id"))
+        if legacy_training_delivery:
+            if not values.get("batch") or not values.get("recording_drive_folder_id"):
+                raise HTTPException(422, "Legacy training delivery requires both a batch name and Drive folder")
+            if current_user.role != UserRole.faculty:
+                raise HTTPException(422, "A trainer must select the personal Drive folder")
+            try:
+                validate_drive_folder(db, current_user.id, values["recording_drive_folder_id"])
+            except DriveUploadError as error:
+                raise HTTPException(422, str(error).replace("_", " ")) from None
+            values["enrollment_mode"] = course_in.enrollment_mode
+        for field in ("program", "semester_number", "section", "semester"):
+            values[field] = None
+        if not legacy_training_delivery:
+            values["batch"] = None
+            values["recording_drive_folder_id"] = None
+    else:
+        if values.get("recording_drive_folder_id"):
+            raise HTTPException(422, "Drive recording folders are configured only for training batches")
+        values["recording_drive_folder_id"] = None
     values["department"] = department_name(db, current_user, course_in.department)
     if values["semester_number"] is not None:
         values["semester"] = f"Semester {values['semester_number']}"
     if current_user.role == UserRole.faculty and values["department"] != current_user.department:
         raise HTTPException(403, "Create courses only in your assigned department")
-    course = Course(**values, faculty_id=current_user.id, institution_id=tenant(current_user))
+    course = Course(**values,
+                    faculty_id=current_user.id if current_user.role == UserRole.faculty else None,
+                    institution_id=tenant(current_user))
     db.add(course)
     try:
         db.flush()
-        enroll_matching_students(db, course)
+        if not is_training or legacy_training_delivery:
+            enroll_matching_students(db, course)
         db.commit()
     except IntegrityError:
         db.rollback()
@@ -88,6 +124,8 @@ def enroll(
     current_user: User = Depends(require_roles(UserRole.student)),
 ):
     course = course_access(db, current_user, course_id, catalog=True)
+    if current_user.institution.institution_type == InstitutionType.training_institution.value:
+        raise HTTPException(403, "Learners are enrolled into batches by an administrator or trainer")
     if not student_matches_course(current_user, course):
         raise HTTPException(status_code=403, detail="This course is assigned to a different student cohort")
 

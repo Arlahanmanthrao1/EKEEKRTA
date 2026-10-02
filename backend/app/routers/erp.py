@@ -28,7 +28,7 @@ from app.integrations.erp_client import (
 from app.models.attendance import Attendance, ClassSession
 from app.models.course import Course
 from app.models.erp import ERPIntegration, ERPSyncEvent
-from app.models.institution import Department, Institution
+from app.models.institution import Department, Institution, InstitutionType
 from app.models.user import User, UserRole
 from app.schemas.erp import (
     ERPConfigurationIn,
@@ -46,6 +46,12 @@ from app.schemas.erp import (
 router = APIRouter(prefix="/erp", tags=["erp"])
 
 
+def require_university_admin(admin: User = Depends(require_roles(UserRole.admin))) -> User:
+    if admin.institution.institution_type != InstitutionType.university.value:
+        raise HTTPException(403, "ERP integration is available only to university institutions")
+    return admin
+
+
 def _configuration(row: ERPIntegration | None) -> ERPConfigurationOut:
     if row is None:
         return ERPConfigurationOut(configured=False)
@@ -59,13 +65,13 @@ def _configuration(row: ERPIntegration | None) -> ERPConfigurationOut:
 
 
 @router.get("/configuration", response_model=ERPConfigurationOut)
-def get_configuration(db: Session = Depends(get_db), admin: User = Depends(require_roles(UserRole.admin))):
+def get_configuration(db: Session = Depends(get_db), admin: User = Depends(require_university_admin)):
     return _configuration(db.query(ERPIntegration).filter(ERPIntegration.institution_id == tenant(admin)).first())
 
 
 @router.put("/configuration", response_model=ERPConfigurationOut)
 def save_configuration(payload: ERPConfigurationIn, db: Session = Depends(get_db),
-                       admin: User = Depends(require_roles(UserRole.admin))):
+                       admin: User = Depends(require_university_admin)):
     institution_id = tenant(admin)
     row = db.query(ERPIntegration).filter(ERPIntegration.institution_id == institution_id).first()
     if row is None and not payload.api_token:
@@ -95,7 +101,7 @@ def _row_or_404(db: Session, institution_id: int) -> ERPIntegration:
 
 
 @router.post("/test", response_model=ERPConfigurationOut)
-def test_connection(db: Session = Depends(get_db), admin: User = Depends(require_roles(UserRole.admin))):
+def test_connection(db: Session = Depends(get_db), admin: User = Depends(require_university_admin)):
     row = _row_or_404(db, tenant(admin))
     success, message = test_erp_connection(row)
     row.last_tested_at = datetime.now(timezone.utc)
@@ -181,7 +187,7 @@ def _import_students(db: Session, admin: User, integration: ERPIntegration) -> E
 
 
 @router.post("/import-students", response_model=ERPStudentImportResult)
-def import_students(db: Session = Depends(get_db), admin: User = Depends(require_roles(UserRole.admin))):
+def import_students(db: Session = Depends(get_db), admin: User = Depends(require_university_admin)):
     integration = _row_or_404(db, tenant(admin))
     if not integration.enabled or not integration.sync_students:
         raise HTTPException(409, "Enable the ERP connection and student import before synchronizing")
@@ -264,7 +270,7 @@ def _preview_response(db: Session, admin: User, integration: ERPIntegration) -> 
 
 
 @router.post("/import-users/preview", response_model=ERPUserImportPreviewOut)
-def preview_user_import(db: Session = Depends(get_db), admin: User = Depends(require_roles(UserRole.admin))):
+def preview_user_import(db: Session = Depends(get_db), admin: User = Depends(require_university_admin)):
     integration = _row_or_404(db, tenant(admin))
     if not integration.enabled or not integration.sync_students:
         raise HTTPException(409, "Enable the ERP connection and user import before previewing")
@@ -273,7 +279,7 @@ def preview_user_import(db: Session = Depends(get_db), admin: User = Depends(req
 
 @router.post("/import-users/confirm", response_model=ERPUserImportResult)
 def confirm_user_import(payload: ERPUserImportConfirmIn, db: Session = Depends(get_db),
-                        admin: User = Depends(require_roles(UserRole.admin))):
+                        admin: User = Depends(require_university_admin)):
     try:
         claims = decode_access_token(payload.confirmation_token)
     except JWTError:
@@ -338,7 +344,7 @@ def confirm_user_import(payload: ERPUserImportConfirmIn, db: Session = Depends(g
 
 
 @router.post("/sync", response_model=ERPSyncResult)
-def full_sync(db: Session = Depends(get_db), admin: User = Depends(require_roles(UserRole.admin))):
+def full_sync(db: Session = Depends(get_db), admin: User = Depends(require_university_admin)):
     institution_id = tenant(admin)
     integration = _row_or_404(db, institution_id)
     if not integration.enabled:
@@ -375,20 +381,20 @@ def _dispatch(db: Session, institution_id: int, queued: int = 0, limit: int = 25
 
 @router.post("/dispatch", response_model=ERPSyncResult)
 def dispatch_waiting(limit: int = Query(25, ge=1, le=100), db: Session = Depends(get_db),
-                     admin: User = Depends(require_roles(UserRole.admin))):
+                     admin: User = Depends(require_university_admin)):
     return _dispatch(db, tenant(admin), limit=limit)
 
 
 @router.get("/events", response_model=list[ERPSyncEventOut])
 def sync_events(limit: int = Query(50, ge=1, le=200), db: Session = Depends(get_db),
-                admin: User = Depends(require_roles(UserRole.admin))):
+                admin: User = Depends(require_university_admin)):
     return db.query(ERPSyncEvent).filter(ERPSyncEvent.institution_id == tenant(admin)).order_by(
         ERPSyncEvent.updated_at.desc()).limit(limit).all()
 
 
 @router.post("/events/{event_id}/retry", response_model=ERPSyncEventOut)
 def retry_event(event_id: int, db: Session = Depends(get_db),
-                admin: User = Depends(require_roles(UserRole.admin))):
+                admin: User = Depends(require_university_admin)):
     event = db.query(ERPSyncEvent).filter(ERPSyncEvent.id == event_id,
                                           ERPSyncEvent.institution_id == tenant(admin)).first()
     if not event:

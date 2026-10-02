@@ -4,9 +4,9 @@ from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.models.institution import Institution, Department
+from app.models.institution import Institution, InstitutionStatus, Department
 from app.models.user import User, UserRole
-from app.schemas.institution import (InstitutionGradingUpdate, InstitutionProfile, InstitutionOut,
+from app.schemas.institution import (InstitutionGradingUpdate, InstitutionProfile, InstitutionRegistrationProfile, InstitutionOut,
                                      InstitutionThemeUpdate, DepartmentCreate, DepartmentOut)
 from app.schemas.user import UserCreate, UserOut
 from app.core.security import hash_password
@@ -20,7 +20,7 @@ router = APIRouter(prefix="/institutions", tags=["institutions"])
 
 class InstitutionRegistration(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    institution: InstitutionProfile
+    institution: InstitutionRegistrationProfile
     administrator: UserCreate
 
 
@@ -42,7 +42,7 @@ def register_institution(payload: InstitutionRegistration, request: Request, db:
         raise HTTPException(422, "Create departments after institution registration")
     values = profile.model_dump(mode="json")
     values["email"] = str(profile.email).lower()
-    institution = Institution(**values, email_domain=domain)
+    institution = Institution(**values, email_domain=domain, status=InstitutionStatus.pending.value)
     try:
         db.add(institution)
         db.flush()

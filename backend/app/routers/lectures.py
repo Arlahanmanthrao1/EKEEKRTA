@@ -22,6 +22,8 @@ from app.models.attendance import ClassSession
 from app.models.user import User, UserRole
 from app.native_ai.lecture_digest import build_digest
 from app.native_ai.model_runtime import model_capabilities
+from app.integrations.google_drive import drive_oauth_configured
+from app.models.google_drive import GoogleDriveConnection
 from app.schemas.lecture import (LectureContentOut, LecturePublicationIn, LectureReviewIn,
                                  LectureTranscriptIn, LectureRecordingOut,
                                  LectureRecordingCapabilitiesOut,
@@ -74,6 +76,10 @@ def _recording_out(item: AILectureRecording, notes_status: str | None,
     return LectureRecordingOut(id=item.id, course_id=item.course_id, session_id=item.session_id,
                                original_filename=item.original_filename, content_type=item.content_type,
                                size_bytes=item.size_bytes, status=item.status, notes_status=notes_status,
+                               drive_upload_status=item.drive_upload_status,
+                               drive_web_url=item.drive_web_url,
+                               drive_error_code=item.drive_error_code,
+                               drive_uploaded_at=item.drive_uploaded_at,
                                preparation=_preparation_out(preparation) if preparation else None,
                                created_at=item.created_at)
 
@@ -85,19 +91,23 @@ def _recording_audit(db: Session, user: User, event: str, item: AILectureRecordi
 
 
 @router.get("/recording-capabilities", response_model=LectureRecordingCapabilitiesOut)
-def recording_capabilities(user: User = Depends(get_current_user)):
+def recording_capabilities(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     if user.role not in (UserRole.faculty, UserRole.admin):
         raise HTTPException(403, "Only faculty or administrators can manage recordings")
     local = not bool(os.getenv("VERCEL"))
     models = model_capabilities(settings.native_speech_model_executable,
         settings.native_speech_model_id, settings.native_slide_ocr_executable,
         settings.native_slide_ocr_model_id)
+    personal_drive = db.query(GoogleDriveConnection).filter(
+        GoogleDriveConnection.user_id == user.id,
+        GoogleDriveConnection.revoked_at.is_(None)).first()
     return LectureRecordingCapabilitiesOut(local_upload_available=local,
         preparation_queue_available=local, maximum_upload_mb=settings.recording_max_upload_mb,
         automatic_recording_available=(local and settings.video_provider == "jitsi"
                                        and settings.jitsi_auto_recording_enabled),
         automatic_transcription_available=local and models["speech_model_available"],
-        slide_ocr_available=local and models["slide_ocr_available"])
+        slide_ocr_available=local and models["slide_ocr_available"],
+        google_drive_upload_available=local and drive_oauth_configured() and bool(personal_drive))
 
 
 @router.get("/recordings/course/{course_id}", response_model=list[LectureRecordingOut])

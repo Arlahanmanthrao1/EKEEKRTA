@@ -55,6 +55,9 @@ JITSI_JWT_APP_SECRET=replace-with-the-same-secret
 JITSI_AUTO_RECORDING_ENABLED=true
 JIBRI_RECORDINGS_DIR=/srv/jitsi-recordings
 RECORDING_STORAGE_DIR=/srv/ekeekrta-private-recordings
+GOOGLE_DRIVE_SERVICE_ACCOUNT_PATH=/run/secrets/ekeekrta-drive-service-account.json
+GOOGLE_DRIVE_IMPERSONATE_USER=
+GOOGLE_DRIVE_UPLOAD_CHUNK_MB=8
 NATIVE_SPEECH_MODEL_EXECUTABLE=/opt/ekeekrta-models/stt
 NATIVE_SPEECH_MODEL_ID=ekeekrta-stt-v1
 NATIVE_SLIDE_OCR_EXECUTABLE=/opt/ekeekrta-models/slide-ocr
@@ -64,6 +67,12 @@ NATIVE_SLIDE_OCR_MODEL_ID=ekeekrta-slide-ocr-v1
 `JITSI_AUTO_RECORDING_ENABLED` must remain false until Jibri actually works.
 The iframe waits for the server-confirmed moderator role, starts file recording,
 shows real recording status, and stops recording before faculty ends the class.
+For a training batch it also checks that the trainer supplied a valid Drive
+folder and that the trainer's personal Google Drive authorization is active
+before offering automatic recording. The trainer connects Google Drive and
+selects the destination with Google Picker in EKEEKRTA. The refresh token stays
+encrypted on the backend; never copy the OAuth client secret or trainer token
+into the frontend or Jitsi containers.
 
 ## Finalized recording handoff
 
@@ -84,6 +93,16 @@ copies the file to opaque private storage and queues the processing worker:
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\run_recording_worker.py --max-jobs 10
+```
+
+For training institutions, that worker streams the same private recording to
+the batch's selected Drive folder before preparing AI media. The dashboard shows
+`pending`, `uploading`, `uploaded` or `failed`; it never treats local import as
+proof of a Drive upload. Retry an individual failed destination after correcting
+folder permissions or credentials:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\upload_recording_to_drive.py --recording-id 123
 ```
 
 If Jibri does not retain the custom metadata in its JSON, pass the authenticated

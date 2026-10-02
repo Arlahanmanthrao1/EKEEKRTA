@@ -33,8 +33,8 @@ export function AuthProvider({ children }) {
     loadUser();
   }, [loadUser]);
 
-  const login = async (email, password) => {
-    const { access_token } = await loginRequest(email, password);
+  const login = async (email, password, platform = false) => {
+    const { access_token } = await loginRequest(email, password, platform);
     localStorage.setItem("lms_token", access_token);
     await loadUser(true);
   };

@@ -19,4 +19,4 @@ def decrypt_secret(value: str) -> str:
     try:
         return _fernet().decrypt(value.encode("ascii")).decode("utf-8")
     except (InvalidToken, ValueError) as exc:
-        raise ValueError("The saved ERP credential cannot be decrypted with the current SECRET_KEY") from exc
+        raise ValueError("The saved credential cannot be decrypted with the current SECRET_KEY") from exc

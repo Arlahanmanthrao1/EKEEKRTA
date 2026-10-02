@@ -6,10 +6,24 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.core.security import decode_access_token
 from app.models.user import User, UserRole
+from app.models.institution import InstitutionStatus
 from app.core.access import tenant
 from app.core.institution_domains import request_login_host, institution_for_host
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
+
+
+def ensure_institution_active(user: User) -> None:
+    institution = user.institution
+    status_value = getattr(institution, "status", InstitutionStatus.active.value) if institution else None
+    if status_value == InstitutionStatus.pending.value:
+        raise HTTPException(status_code=403, detail="Institution registration is awaiting Ekeekrta review.")
+    if status_value == InstitutionStatus.suspended.value:
+        raise HTTPException(status_code=403, detail="Institution access is suspended. Contact Ekeekrta support.")
+    if status_value == InstitutionStatus.rejected.value:
+        raise HTTPException(status_code=403, detail="Institution registration was not approved. Contact Ekeekrta support.")
+    if status_value != InstitutionStatus.active.value:
+        raise HTTPException(status_code=403, detail="Institution access is unavailable. Contact Ekeekrta support.")
 
 
 def get_authenticated_user(request: Request, token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
@@ -32,12 +46,18 @@ def get_authenticated_user(request: Request, token: str = Depends(oauth2_scheme)
         raise credentials_exception
     if int(payload.get("session_version", 0)) != int(user.session_version or 0):
         raise credentials_exception
-    tenant(user)
     host = request_login_host(request)
     if payload.get("login_host") and payload["login_host"] != host:
         raise credentials_exception
-    if host and institution_for_host(host, db).id != user.institution_id:
-        raise credentials_exception
+    if user.role == UserRole.platform_admin:
+        # Platform operators are deliberately outside every institution tenant.
+        if user.institution_id is not None or host:
+            raise credentials_exception
+    else:
+        tenant(user)
+        ensure_institution_active(user)
+        if host and institution_for_host(host, db).id != user.institution_id:
+            raise credentials_exception
     return user
 
 

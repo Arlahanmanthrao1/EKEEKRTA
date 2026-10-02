@@ -16,6 +16,10 @@ from app.models.material import StudyMaterial
 from app.models.programming import ProgrammingSubmission
 from app.models.quiz import QuizAttempt
 from app.models.erp import ERPIntegration
+from app.models.institution import InstitutionType
+from app.models.data_exchange import DataExchangeProfile
+from app.models.training import (TrainingBatch, TrainingBatchEnrollment, TrainingCertificate,
+                                 TrainingLessonCompletion)
 from app.schemas.user import UserOut
 from app.core.deps import require_roles
 
@@ -50,11 +54,12 @@ def update_account(user_id: int, payload: AccountDetails, db: Session = Depends(
     account = users_query(db, admin).filter(User.id == user_id).first()
     if not account:
         raise HTTPException(404, "Account not found")
-    if account.role == UserRole.student and db.query(ERPIntegration).filter(
+    if (admin.institution.institution_type == InstitutionType.university.value
+            and account.role == UserRole.student and db.query(ERPIntegration).filter(
         ERPIntegration.institution_id == admin.institution_id,
         ERPIntegration.enabled.is_(True),
         ERPIntegration.sync_students.is_(True),
-    ).first():
+    ).first()):
         raise HTTPException(409, "Student profiles are managed by the ERP. Update the ERP record and import again.")
     account.name = payload.name
     account.department = department_name(db, admin, payload.department) if account.role != UserRole.admin or payload.department else None
@@ -68,13 +73,14 @@ def update_account(user_id: int, payload: AccountDetails, db: Session = Depends(
             raise HTTPException(409, "Official institution ID is already registered")
         account.institutional_id = official_id
     if account.role == UserRole.student:
+        is_training = admin.institution.institution_type == InstitutionType.training_institution.value
         values = {}
         for field in ("program", "batch", "semester_number", "section", "institutional_id"):
             values[field] = getattr(payload, field) if field in payload.model_fields_set else getattr(account, field)
-        if not all(values.values()):
+        if not is_training and not all(values.values()):
             raise HTTPException(422, "Student accounts require registration ID, program, batch, semester and section")
         for field, value in values.items():
-            setattr(account, field, value)
+            setattr(account, field, None if is_training and field in {"program", "batch", "semester_number", "section"} else value)
         enroll_matching_compulsory_courses(db, account)
     db.commit()
     db.refresh(account)
@@ -103,6 +109,10 @@ def delete_account(user_id: int, db: Session = Depends(get_db),
         or db.query(AILectureContent.id).filter(AILectureContent.submitted_by == account.id).first()
         or db.query(AILectureRecording.id).filter(AILectureRecording.uploaded_by == account.id).first()
         or db.query(AILecturePreparationJob.id).filter(AILecturePreparationJob.requested_by == account.id).first()
+        or db.query(TrainingBatch.id).filter(TrainingBatch.trainer_id == account.id).first()
+        or db.query(TrainingCertificate.id).filter(
+            (TrainingCertificate.student_id == account.id) | (TrainingCertificate.issued_by == account.id)).first()
+        or db.query(TrainingLessonCompletion.id).filter(TrainingLessonCompletion.student_id == account.id).first()
     )
     if protected_records:
         raise HTTPException(
@@ -115,8 +125,11 @@ def delete_account(user_id: int, db: Session = Depends(get_db),
         {Course.faculty_id: None}, synchronize_session=False
     )
     db.query(Enrollment).filter(Enrollment.student_id == account.id).delete(synchronize_session=False)
+    db.query(TrainingBatchEnrollment).filter(
+        TrainingBatchEnrollment.student_id == account.id).delete(synchronize_session=False)
     db.query(GoogleIdentity).filter(GoogleIdentity.user_id == account.id).delete(synchronize_session=False)
     db.query(PasswordResetToken).filter(PasswordResetToken.user_id == account.id).delete(synchronize_session=False)
+    db.query(DataExchangeProfile).filter(DataExchangeProfile.owner_id == account.id).delete(synchronize_session=False)
     db.delete(account)
     db.commit()
 
@@ -133,11 +146,14 @@ class SemesterPromotion(BaseModel):
 @router.post("/students/promote")
 def promote_students(payload: SemesterPromotion, db: Session = Depends(get_db),
                      admin: User = Depends(require_roles(UserRole.admin))):
-    if db.query(ERPIntegration).filter(
+    if admin.institution.institution_type == InstitutionType.training_institution.value:
+        raise HTTPException(403, "Semester promotion is available only to university institutions")
+    if (admin.institution.institution_type == InstitutionType.university.value
+            and db.query(ERPIntegration).filter(
         ERPIntegration.institution_id == admin.institution_id,
         ERPIntegration.enabled.is_(True),
         ERPIntegration.sync_students.is_(True),
-    ).first():
+    ).first()):
         raise HTTPException(409, "Student semesters are managed by the ERP. Update them there and import again.")
     if payload.to_semester != payload.from_semester + 1:
         raise HTTPException(422, "Students can be promoted only to the next semester")

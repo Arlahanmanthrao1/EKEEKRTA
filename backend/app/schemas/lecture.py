@@ -24,6 +24,10 @@ class LectureContentOut(BaseModel):
     course_id: int
     session_id: int
     status: str
+    drive_upload_status: str = "not_applicable"
+    drive_web_url: str | None = None
+    drive_error_code: str | None = None
+    drive_uploaded_at: datetime | None = None
     transcript_source: str
     summary: dict
     transcript: str | None = None
@@ -76,6 +80,7 @@ class LectureRecordingCapabilitiesOut(BaseModel):
     automatic_recording_available: bool = False
     automatic_transcription_available: bool = False
     slide_ocr_available: bool = False
+    google_drive_upload_available: bool = False
 
 
 LectureRecordingOut.model_rebuild()

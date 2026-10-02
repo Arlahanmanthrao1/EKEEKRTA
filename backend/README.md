@@ -80,15 +80,15 @@ need to evolve the schema without losing data later, introduce Alembic.
 
 - Automatic Jitsi/Jibri recording and a production recording worker
 - Whisper transcription + LLM summarization pipeline
-- Plagiarism similarity checker (`plagiarism_score` field already exists
-  on `Submission`, ready to be populated)
 - At-risk student scoring
 - Staff analytics aggregation endpoints
 
 ## ERP integration
 
 Each institution administrator configures its own real ERP HTTPS endpoint and
-API token from **Admin → ERP Integration**. Student, faculty, and HOD master
+API token from **Admin → ERP Integration**. This optional connector is available
+only to institutions registered as **University**; training institutions do not
+expose ERP UI or ERP APIs. Student, faculty, and HOD master
 records are pulled from the ERP, previewed, and explicitly confirmed by the
 administrator. Accounts are matched by official registration/employee number;
 ERP administrators and conflicting role changes are never imported. Courses and
@@ -108,6 +108,15 @@ prepare a non-published quiz outline, and inspect students in their course scope
 HODs see only department-scoped progress, students see only their own progress,
 and administrators can review institution-wide progress or confirm an ERP
 student import.
+
+Voice control uses a separate institution-built short-command executable. It
+never calls browser/cloud speech. The interface records up to 20 seconds and the
+private backend enforces a size limit, validates and temporarily saves the audio, runs the
+reviewed executable, deletes the audio, and sends sufficiently confident text
+through the same role checks and confirmation workflow as typed commands. Set
+`NATIVE_VOICE_MODEL_EXECUTABLE` and `NATIVE_VOICE_MODEL_ID` only after the model
+passes the evaluation gate in
+[`docs/ai-voice-model-contract.md`](../docs/ai-voice-model-contract.md).
 
 The intent model is trained at startup from EKEEKRTA-owned command phrases in
 `app/native_ai/intent_model.py`. It performs no network inference and loads no
@@ -335,6 +344,58 @@ iframe request Jibri file recording after Jitsi confirms moderator status and
 stop it before ending class. Keep it false until the official Jitsi/Jibri stack
 is actually operational. The private Jibri handoff and deployment checklist are
 in [`deployment/jitsi/README.md`](../deployment/jitsi/README.md).
+
+### Training-batch recording delivery to Google Drive
+
+A trainer connects their own Google account from the Create Batch page and
+chooses a folder with Google Picker. EKEEKRTA requests the limited `drive.file`
+scope, stores the trainer's refresh token encrypted with `SECRET_KEY`, and never
+returns that token to the browser. The browser receives only a short-lived
+access token for the folder picker. The selected folder ID is never exposed by
+the normal course API.
+
+In Google Cloud, enable **Google Drive API** and **Google Picker API**, configure
+the OAuth consent screen, then create an OAuth 2.0 **Web application** client.
+Add the exact backend callback URL as an authorized redirect URI. Configure the
+backend with:
+
+```dotenv
+GOOGLE_DRIVE_OAUTH_CLIENT_ID=your-web-client-id.apps.googleusercontent.com
+GOOGLE_DRIVE_OAUTH_CLIENT_SECRET=your-backend-only-client-secret
+GOOGLE_DRIVE_OAUTH_REDIRECT_URI=http://127.0.0.1:8000/integrations/google-drive/callback
+GOOGLE_DRIVE_FRONTEND_RETURN_URL=http://127.0.0.1:5173/faculty/create-course
+GOOGLE_DRIVE_UPLOAD_CHUNK_MB=8
+```
+
+Create a browser-restricted API key for Picker and put the public values in
+`frontend/.env`:
+
+```dotenv
+VITE_GOOGLE_PICKER_API_KEY=your-browser-restricted-key
+VITE_GOOGLE_DRIVE_APP_ID=your-google-cloud-project-number
+```
+
+Restrict that key to the Google Picker API and the real EKEEKRTA web origins.
+For production, replace both localhost URLs with the exact HTTPS backend and
+frontend URLs and add the production callback in the OAuth client.
+
+For training institutions, automatic recording becomes available only when the
+self-hosted Jitsi/Jibri settings, the trainer's personal Drive authorization
+and the batch folder are all configured. A finalized Jibri file is imported privately,
+queued for AI preparation and streamed to the selected Drive folder. Drive and
+AI statuses are recorded independently, so an upload failure never looks like a
+successful recording. Retry one failed upload on the private worker with:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\upload_recording_to_drive.py --recording-id 123
+```
+
+Disconnecting Drive revokes the trainer connection and prevents new recordings
+from uploading until that trainer reconnects. JaaS development meetings and
+the Vercel backend do not provide this automatic
+file-recording path. The Drive integration must run beside the institution's
+self-hosted Jibri storage. Folder sharing determines who can open recordings;
+EKEEKRTA does not make Drive files public.
 
 This is a completed application integration contract, **not a trained model or
 verified Jibri installation**. On the current machine FFmpeg is absent and the

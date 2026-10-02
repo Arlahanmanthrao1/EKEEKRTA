@@ -7,14 +7,14 @@ import { institutionHost } from "../api/institutionHost";
 import GoogleSignIn from "../components/GoogleSignIn";
 import "../styles/dashboard.css";
 
-export default function Login() {
+export default function Login({ platform = false }) {
   const { login, loginWithGoogle } = useAuth();
-  const host = institutionHost();
+  const host = platform ? null : institutionHost();
   const [institution, setInstitution] = useState(null);
   const [profileError, setProfileError] = useState("");
   const [profileLoading, setProfileLoading] = useState(Boolean(host));
   const [profileAttempt, setProfileAttempt] = useState(0);
-  usePageTitle("Sign in", institution?.name);
+  usePageTitle(platform ? "Team sign in" : "Sign in", institution?.name);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -40,7 +40,7 @@ export default function Login() {
     setError("");
     setSubmitting(true);
     try {
-      await login(email, password);
+      await login(email, password, platform);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -52,33 +52,33 @@ export default function Login() {
     <main className="login-page brand-login">
       <section className="login-art">
         <BrandLogo inverse />
-        <div><h1>Every institution.<br /><em>One learning space.</em></h1><p className="login-art-description">Classes, coursework and academic progress. Connected in a space your institution can call its own.</p></div>
+        <div><h1>{platform ? <>Operate with clarity.<br /><em>Protect every tenant.</em></> : <>Every institution.<br /><em>One learning space.</em></>}</h1><p className="login-art-description">{platform ? "Review institution onboarding, monitor platform adoption and manage access from one isolated operations portal." : "Classes, coursework and academic progress. Connected in a space your institution can call its own."}</p></div>
         <div className="login-art-footer">{brand.tagline}</div>
       </section>
       <section className="login-panel">
         <div className="login-card">
           <BrandLogo />
           {institution?.logo_url && <img className="institution-logo-preview" src={institution.logo_url} alt={`${institution.name} logo`} referrerPolicy="no-referrer" />}
-          <h2>{institution ? `Welcome to ${institution.name}` : host ? "Institution sign in" : "Welcome back"}</h2>
-          <p>{institution ? `Sign in with your @${institution.email_domain} account.` : host ? host : "Sign in with your institution account."}</p>
+          <h2>{platform ? "Ekeekrta team sign in" : institution ? `Welcome to ${institution.name}` : host ? "Institution sign in" : "Welcome back"}</h2>
+          <p>{platform ? "Restricted to authorized Ekeekrta platform operators." : institution ? `Sign in with your @${institution.email_domain} account.` : host ? host : "Sign in with your institution account."}</p>
           {profileLoading && <p role="status">Loading your institution…</p>}
           {profileError && <div className="error-banner" role="alert"><p>{profileError}</p><button type="button" className="btn btn-secondary" onClick={() => setProfileAttempt((value) => value + 1)}>Try again</button></div>}
           {portalReady && !profileLoading && <>
           <form onSubmit={handleSubmit} className="login-form">
-            <label className="field-label">Institution email<input className="field" type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder={institution ? `you@${institution.email_domain}` : "you@institution.edu"} required autoComplete="email" /></label>
+            <label className="field-label">{platform ? "Team email" : institution ? "Institution email" : "Email address"}<input className="field" type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder={platform ? "operator@ekeekrta.org" : institution ? `you@${institution.email_domain}` : "you@institution.edu"} required autoComplete="email" /></label>
             <label className="field-label">Password<input className="field" type="password" value={password} onChange={(event) => setPassword(event.target.value)} required autoComplete="current-password" /></label>
-            <Link className="forgot-password-link" to="/forgot-password">Forgot password?</Link>
+            {!platform && <Link className="forgot-password-link" to="/forgot-password">Forgot password?</Link>}
             {error && <p className="error-banner">{error}</p>}
             <button type="submit" disabled={submitting} className="btn btn-primary">{submitting ? "Signing in…" : "Sign in"}</button>
           </form>
-          <GoogleSignIn emailDomain={institution?.email_domain} disabled={submitting} onCredential={async (credential, nonce) => {
+          {!platform && <GoogleSignIn emailDomain={institution?.email_domain} disabled={submitting} onCredential={async (credential, nonce) => {
             setSubmitting(true); setError("");
             try { await loginWithGoogle(credential, nonce); }
             finally { setSubmitting(false); }
-          }} />
+          }} />}
           </>}
-          <p className="auth-switch">Students and staff: contact your institution administrator for an account.</p>
-          {!host && <div className="institution-invite"><strong>Bring your institution here.</strong><Link to="/register-institution">Register your institution <span aria-hidden="true">↗</span></Link></div>}
+          <p className="auth-switch">{platform ? <Link to="/login">← Return to institution sign in</Link> : "Students and staff: contact your institution administrator for an account."}</p>
+          {!platform && !host && <><div className="institution-invite"><strong>Bring your institution here.</strong><Link to="/register-institution">Register your institution <span aria-hidden="true">↗</span></Link></div><p className="platform-login-link"><Link to="/platform-login">Ekeekrta team sign in</Link></p></>}
         </div>
       </section>
     </main>

@@ -113,7 +113,7 @@ class InstitutionDomainTest(unittest.TestCase):
             self.assertEqual(response.status_code, 404)
 
     def test_onboarding_is_only_available_on_main_site(self):
-        payload = {"institution": {"name": "Isolated Gamma", "email": "office@gamma.edu"},
+        payload = {"institution": {"institution_type": "university", "name": "Isolated Gamma", "email": "office@gamma.edu"},
                    "administrator": {"name": "Test admin", "email": "admin@gamma.edu", "password": "test-only-password"}}
         response = self.client.post("/institutions/register", json=payload, headers={"Origin": "https://ekeekrta.alpha.edu"})
         self.assertEqual(response.status_code, 403)

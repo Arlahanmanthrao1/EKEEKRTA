@@ -11,6 +11,7 @@ from app.core.recording_storage import recording_path, recording_root
 from app.models.ai import AIAuditLog, AILecturePreparationJob, AILectureRecording
 from app.models.attendance import ClassSession
 from app.models.course import Course
+from app.models.institution import Institution, InstitutionType
 from app.models.user import User, UserRole
 
 
@@ -24,6 +25,7 @@ def ingest_jibri_recording(db: Session, session_id: int, source: Path,
     course = db.get(Course, session.course_id)
     if not course:
         raise ValueError("recording_course_not_found")
+    institution = db.get(Institution, course.institution_id)
     uploader = db.get(User, course.faculty_id) if course.faculty_id else None
     if not uploader:
         uploader = db.query(User).filter(User.institution_id == course.institution_id,
@@ -56,11 +58,14 @@ def ingest_jibri_recording(db: Session, session_id: int, source: Path,
         with source.open("rb") as input_file, target.open("xb") as output_file:
             for chunk in iter(lambda: input_file.read(1024 * 1024), b""):
                 size += len(chunk); digest.update(chunk); output_file.write(chunk)
+        drive_status = ("pending" if course.recording_drive_folder_id else "destination_missing") if (
+            institution and institution.institution_type == InstitutionType.training_institution.value
+        ) else "not_applicable"
         item = AILectureRecording(institution_id=course.institution_id, course_id=course.id,
             session_id=session.id, uploaded_by=uploader.id, original_filename=source.name[:180],
             content_type="video/mp4" if suffix == ".mp4" else "video/webm",
             storage_key=storage_key, size_bytes=size, sha256=digest.hexdigest(),
-            status="preparation_queued")
+            status="preparation_queued", drive_upload_status=drive_status)
         db.add(item); db.flush()
         db.add(AILecturePreparationJob(institution_id=course.institution_id,
             course_id=course.id, recording_id=item.id, requested_by=uploader.id,

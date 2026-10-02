@@ -7,6 +7,11 @@ secrets/
 *.pem
 *.key
 .venv/
+backend/.testdeps-py312/
+backend/.test-venv/
+private-ai-data/
+.review2-build/
+.work/
 venv/
 node_modules/
 dist/

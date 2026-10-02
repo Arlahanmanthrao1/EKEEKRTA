@@ -36,6 +36,13 @@ class AICommandOut(BaseModel):
     action: AIActionOut
 
 
+class AIVoiceCommandOut(AICommandOut):
+    transcript: str
+    speech_confidence: float
+    language: str
+    model_id: str
+
+
 class AICorrectionIn(BaseModel):
     corrected_intent: str
     corrected_payload: dict[str, Any] = Field(default_factory=dict)

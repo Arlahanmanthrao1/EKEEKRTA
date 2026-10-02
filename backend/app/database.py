@@ -27,6 +27,12 @@ def ensure_schema_compatibility():
     ``create_all`` cannot add columns to existing databases. These small,
     additive upgrades preserve existing records until Alembic is introduced.
     """
+    # SQLAlchemy enums are native PostgreSQL types. Existing databases need the
+    # operator value added before an operator account can be inserted.
+    if engine.dialect.name == "postgresql":
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TYPE userrole ADD VALUE IF NOT EXISTS 'platform_admin'"))
+
     inspector = inspect(engine)
     tables = inspector.get_table_names()
     if engine.dialect.name == "sqlite" and "class_sessions" in tables and "ended_at" not in {
@@ -37,9 +43,15 @@ def ensure_schema_compatibility():
 
     additions = {
         "institutions": {
+            "institution_type": "VARCHAR(32) NOT NULL DEFAULT 'university'",
             "default_theme": "VARCHAR(20) NOT NULL DEFAULT 'light'",
             "grading_scale_max": "FLOAT NOT NULL DEFAULT 10",
             "passing_grade_point": "FLOAT NOT NULL DEFAULT 4",
+            "status": "VARCHAR(24) NOT NULL DEFAULT 'active'",
+            "status_reason": "VARCHAR(500)",
+            "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+            "reviewed_at": "TIMESTAMP",
+            "reviewed_by": "INTEGER REFERENCES users(id)",
         },
         "users": {
             "program": "VARCHAR", "batch": "VARCHAR", "semester_number": "INTEGER", "section": "VARCHAR",
@@ -50,9 +62,21 @@ def ensure_schema_compatibility():
         },
         "courses": {
             "course_type": "VARCHAR NOT NULL DEFAULT 'academic'", "program": "VARCHAR", "batch": "VARCHAR",
+            "recording_drive_folder_id": "VARCHAR(180)",
             "semester_number": "INTEGER", "section": "VARCHAR",
             "enrollment_mode": "VARCHAR NOT NULL DEFAULT 'elective'",
             "credits": "FLOAT",
+        },
+        "ai_lecture_recordings": {
+            "drive_upload_status": "VARCHAR(24) NOT NULL DEFAULT 'not_applicable'",
+            "drive_file_id": "VARCHAR(180)", "drive_web_url": "VARCHAR(2048)",
+            "drive_error_code": "VARCHAR(80)", "drive_uploaded_at": "TIMESTAMP",
+        },
+        "class_sessions": {
+            "training_batch_id": "INTEGER REFERENCES training_batches(id)",
+        },
+        "scheduled_classes": {
+            "training_batch_id": "INTEGER REFERENCES training_batches(id)",
         },
     }
     for table, expected in additions.items():
@@ -63,12 +87,37 @@ def ensure_schema_compatibility():
             for name, definition in expected.items():
                 if name not in present:
                     qualifier = " IF NOT EXISTS" if engine.dialect.name == "postgresql" else ""
-                    connection.execute(text(f"ALTER TABLE {table} ADD COLUMN{qualifier} {name} {definition}"))
+                    # SQLite rejects CURRENT_TIMESTAMP as an ALTER TABLE
+                    # default. Add the legacy column without that default,
+                    # backfill existing rows, and let the ORM's Python default
+                    # populate new rows. Fresh databases still receive the
+                    # model's server-side default through create_all().
+                    applied_definition = definition
+                    if engine.dialect.name == "sqlite" and name == "created_at":
+                        applied_definition = "TIMESTAMP"
+                    connection.execute(text(
+                        f"ALTER TABLE {table} ADD COLUMN{qualifier} {name} {applied_definition}"
+                    ))
+                    if engine.dialect.name == "sqlite" and name == "created_at":
+                        connection.execute(text(
+                            f"UPDATE {table} SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL"
+                        ))
     if "users" in tables:
         with engine.begin() as connection:
             connection.execute(text(
                 "CREATE UNIQUE INDEX IF NOT EXISTS uq_user_institutional_id "
                 "ON users (institution_id, institutional_id) WHERE institutional_id IS NOT NULL"
+            ))
+    with engine.begin() as connection:
+        if "class_sessions" in tables:
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_class_sessions_training_batch_id "
+                "ON class_sessions (training_batch_id)"
+            ))
+        if "scheduled_classes" in tables:
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_scheduled_classes_training_batch_id "
+                "ON scheduled_classes (training_batch_id)"
             ))
 
 

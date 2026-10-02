@@ -5,9 +5,14 @@ import subprocess
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.core.recording_storage import prepared_media_path, recording_root
+from app.core.recording_storage import prepared_media_path, recording_path, recording_root
+from app.integrations.google_drive import DriveUploadError, upload_file_to_drive
 from app.models.ai import (AIAuditLog, AILectureContent, AILecturePreparationJob,
                            AILectureRecording)
+from app.models.course import Course
+from app.models.attendance import ClassSession
+from app.models.training import TrainingBatch
+from app.models.institution import Institution, InstitutionType
 from app.native_ai.lecture_digest import build_digest
 from app.native_ai.model_runtime import model_capabilities, run_slide_ocr, run_speech_model
 from app.native_ai.recording_media import prepare_recording_media, verify_recording_file
@@ -38,9 +43,63 @@ def _safe_error_code(error: Exception) -> str:
     return "media_preparation_failed"
 
 
+def upload_training_recording(db: Session, recording: AILectureRecording,
+                              uploader=upload_file_to_drive) -> dict:
+    """Upload once to the configured training-batch folder without blocking AI."""
+    if recording.drive_file_id and recording.drive_upload_status == "uploaded":
+        return {"status": "uploaded", "web_url": recording.drive_web_url}
+    course = db.get(Course, recording.course_id)
+    session = db.get(ClassSession, recording.session_id)
+    batch = db.get(TrainingBatch, session.training_batch_id) if session and session.training_batch_id else None
+    institution = db.get(Institution, recording.institution_id)
+    if not institution or institution.institution_type != InstitutionType.training_institution.value:
+        recording.drive_upload_status = "not_applicable"
+        recording.drive_error_code = None
+        db.commit()
+        return {"status": "not_applicable"}
+    folder_id = batch.recording_drive_folder_id if batch else course.recording_drive_folder_id if course else None
+    trainer_id = batch.trainer_id if batch else course.faculty_id if course else None
+    if not folder_id:
+        recording.drive_upload_status = "destination_missing"
+        recording.drive_error_code = "drive_destination_missing"
+        db.commit()
+        return {"status": "destination_missing", "error_code": recording.drive_error_code}
+    verify_recording_file(recording)
+    recording.drive_upload_status = "uploading"
+    recording.drive_error_code = None
+    db.commit()
+    try:
+        if not trainer_id:
+            raise DriveUploadError("training_batch_trainer_missing")
+        result = uploader(db, trainer_id,
+                          recording_path(recording_root(), recording.storage_key),
+                          recording.original_filename, recording.content_type,
+                          folder_id)
+        recording = db.get(AILectureRecording, recording.id)
+        recording.drive_upload_status = "uploaded"
+        recording.drive_file_id = result["file_id"]
+        recording.drive_web_url = result["web_url"]
+        recording.drive_error_code = None
+        recording.drive_uploaded_at = datetime.now(timezone.utc)
+        db.add(AIAuditLog(institution_id=recording.institution_id,
+            user_id=recording.uploaded_by, event_type="training_recording_uploaded_to_drive",
+            details={"recording_id": recording.id, "course_id": recording.course_id,
+                     "session_id": recording.session_id,
+                     "training_batch_id": batch.id if batch else None}))
+        db.commit()
+        return {"status": "uploaded", "web_url": recording.drive_web_url}
+    except DriveUploadError as error:
+        db.rollback()
+        recording = db.get(AILectureRecording, recording.id)
+        recording.drive_upload_status = "failed"
+        recording.drive_error_code = str(error)[:80]
+        db.commit()
+        return {"status": "failed", "error_code": recording.drive_error_code}
+
+
 def process_next_recording_job(db: Session, institution_id: int | None = None,
                                ffmpeg_binary: str = "ffmpeg", frame_interval_seconds: int = 30,
-                               runner=subprocess.run) -> dict | None:
+                               runner=subprocess.run, drive_uploader=upload_file_to_drive) -> dict | None:
     query = db.query(AILecturePreparationJob).filter(AILecturePreparationJob.status == "queued")
     if institution_id is not None:
         query = query.filter(AILecturePreparationJob.institution_id == institution_id)
@@ -71,6 +130,11 @@ def process_next_recording_job(db: Session, institution_id: int | None = None,
     db.commit()
     try:
         prepared_path = prepared_media_path(recording_root(), recording.storage_key)
+        # Never copy changed or truncated media to an external destination.
+        verify_recording_file(recording)
+        drive_result = upload_training_recording(db, recording, drive_uploader)
+        recording = db.get(AILectureRecording, recording.id)
+        job = db.get(AILecturePreparationJob, job.id)
         audio_path = prepared_path / "audio.wav"
         frames_path = prepared_path / "frames"
         if audio_path.is_file() and frames_path.is_dir():
@@ -137,7 +201,8 @@ def process_next_recording_job(db: Session, institution_id: int | None = None,
                       "sampled_frame_count": result["sampled_frame_count"],
                       "transcript_created": notes_created if capabilities["speech_model_available"] else False,
                       "notes_created": notes_created if capabilities["speech_model_available"] else False,
-                      "slide_ocr_used": bool(slides) if capabilities["speech_model_available"] else False}
+                      "slide_ocr_used": bool(slides) if capabilities["speech_model_available"] else False,
+                      "drive_upload_status": drive_result["status"]}
         job.finished_at = datetime.now(timezone.utc)
         db.commit()
         return {"job_id": job.id, "status": job.status, "stage": job.stage,

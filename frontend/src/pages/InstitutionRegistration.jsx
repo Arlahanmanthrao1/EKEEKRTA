@@ -40,7 +40,7 @@ export async function prepareInstitutionLogo(file) {
 
 export default function InstitutionRegistration() {
   usePageTitle("Register your institution");
-  const [form, setForm] = useState({ name: "", email: "", logo_url: "", address: "", adminName: "", adminEmail: "", password: "", confirm: "" });
+  const [form, setForm] = useState({ institution_type: "", name: "", email: "", logo_url: "", address: "", adminName: "", adminEmail: "", password: "", confirm: "" });
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [logoBusy, setLogoBusy] = useState(false);
@@ -64,7 +64,7 @@ export default function InstitutionRegistration() {
     setBusy(true);
     try {
       const account = await apiFetch("/institutions/register", { method: "POST", body: JSON.stringify({
-        institution: { name: form.name, email: form.email, logo_url: form.logo_url || null, address: form.address || null },
+        institution: { institution_type: form.institution_type, name: form.name, email: form.email, logo_url: form.logo_url || null, address: form.address || null },
         administrator: { name: form.adminName, email: form.adminEmail, password: form.password },
       }) });
       setCreated(account);
@@ -76,11 +76,24 @@ export default function InstitutionRegistration() {
     <header className="brand-onboarding-header"><Link className="platform-home" to="/login"><BrandLogo /></Link><Link to="/login">← Back to sign in</Link></header>
     <section className="card panel-card">
       <p className="section-eyebrow">Institution onboarding</p><h1>Register your institution</h1>
-      {created ? <div role="status"><h2>{created.institution.name} is ready</h2><p>Sign in as {created.email} using the password you just chose. Then create departments and register your HODs, faculty and students.</p><Link className="btn btn-primary" to="/login">Go to sign in</Link></div> : <>
+      {created ? <div role="status"><h2>{created.institution.name} was submitted for review</h2><p>The Ekeekrta team must approve this institution before {created.email} can sign in. Your chosen administrator password remains valid; Ekeekrta staff cannot view it.</p><p className="footnote">You can return to sign in after approval. Suspicious or unauthorized registrations may be rejected.</p><Link className="btn btn-primary" to="/login">Return to sign in</Link></div> : <>
         <p>Create an institution profile and its first administrator. Students and staff accounts are created by the administrator after setup.</p>
         <p className="footnote">Use your official institution email domain. Only register an institution you are authorized to administer. Domain ownership is not automatically verified in this version.</p>
         <form className="form-grid" onSubmit={submit}>
           <h2 className="wide">1. Institution details</h2>
+          <fieldset className="wide institution-type-fieldset">
+            <legend>Institution type</legend>
+            <div className="institution-type-options">
+              <label className={`institution-type-card ${form.institution_type === "university" ? "selected" : ""}`}>
+                <input type="radio" name="institution_type" value="university" checked={form.institution_type === "university"} onChange={update} required />
+                <span><strong>University</strong><small>Academic departments, cohorts, semester progression, and optional ERP integration.</small></span>
+              </label>
+              <label className={`institution-type-card ${form.institution_type === "training_institution" ? "selected" : ""}`}>
+                <input type="radio" name="institution_type" value="training_institution" checked={form.institution_type === "training_institution"} onChange={update} required />
+                <span><strong>Training institution</strong><small>Courses, classes, assignments, quizzes, attendance, programming assessments, and AI—without ERP integration.</small></span>
+              </label>
+            </div>
+          </fieldset>
           <label className="field-label">Institution name<input className="field" name="name" value={form.name} onChange={update} minLength={2} maxLength={160} required /></label>
           <label className="field-label">Official institution email<input className="field" type="email" name="email" value={form.email} onChange={update} required /><small>This email’s domain will be required for staff and student accounts.</small></label>
           <div className="field-label institution-logo-upload"><span>Institution logo</span><label className="logo-file-button"><input type="file" accept="image/png,image/jpeg,image/webp" onChange={uploadLogo} disabled={busy || logoBusy} /><span>{logoBusy ? "Optimizing logo…" : "Choose logo image"}</span></label><small>PNG, JPEG, or WebP up to 5 MB. The image is optimized for the portal and saved with the institution profile.</small></div>

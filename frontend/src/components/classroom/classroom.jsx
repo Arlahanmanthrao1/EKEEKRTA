@@ -69,6 +69,7 @@ export default function Classroom({ roomId, courseId, studentId, studentName, se
   const [callStatus, setCallStatus] = useState("loading");
   const [diagnostic, setDiagnostic] = useState("");
   const [recordingStatus, setRecordingStatus] = useState("unavailable");
+  const [recordingReason, setRecordingReason] = useState("");
 
   const sendAttendance = useCallback(
     (eventType, keepalive = false) => {
@@ -102,6 +103,7 @@ export default function Classroom({ roomId, courseId, studentId, studentName, se
     recordingRequestedRef.current = false;
     recordingModeRef.current = null;
     setRecordingStatus("unavailable");
+    setRecordingReason("");
     setCallStatus("loading");
     setDiagnostic("");
 
@@ -142,9 +144,12 @@ export default function Classroom({ roomId, courseId, studentId, studentName, se
           },
         });
         apiRef.current = api;
-        if (isFaculty && connection.recording?.available) {
-          recordingModeRef.current = connection.recording.mode || "file";
-          setRecordingStatus("ready");
+        if (isFaculty) {
+          setRecordingReason(connection.recording?.reason || "");
+          if (connection.recording?.available) {
+            recordingModeRef.current = connection.recording.mode || "file";
+            setRecordingStatus("ready");
+          }
         }
         setCallStatus("connecting");
         joinTimeoutRef.current = window.setTimeout(() => {
@@ -370,6 +375,7 @@ export default function Classroom({ roomId, courseId, studentId, studentName, se
       {isFaculty && sessionId && (
         <div className="classroom-controls">
           {recordingStatus !== "unavailable" && <span className="classroom-recording-status" role="status">Recording: {recordingStatus}</span>}
+          {recordingStatus === "unavailable" && recordingReason && <span className="classroom-recording-status" role="status" title={recordingReason}>Recording: setup required</span>}
           <button onClick={toggleFullscreenRequirement} disabled={togglingFullscreen || endingClass} className="classroom-control">
             {fullscreenRequired ? "Fullscreen required" : "Normal screen allowed"}
           </button>

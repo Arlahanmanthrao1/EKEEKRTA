@@ -11,6 +11,7 @@ class UserRole(str, enum.Enum):
     faculty = "faculty"
     hod = "hod"
     admin = "admin"
+    platform_admin = "platform_admin"
 
 
 class User(Base):
@@ -19,7 +20,7 @@ class User(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     institution_id = Column(Integer, ForeignKey("institutions.id"), nullable=True, index=True)
-    institution = relationship("Institution")
+    institution = relationship("Institution", foreign_keys=[institution_id])
     name = Column(String, nullable=False)
     email = Column(String, unique=True, index=True, nullable=False)
     hashed_password = Column(String, nullable=False)
@@ -40,3 +41,4 @@ class User(Base):
 
     enrollments = relationship("Enrollment", back_populates="student")
     courses_taught = relationship("Course", back_populates="faculty")
+    google_drive_connection = relationship("GoogleDriveConnection", uselist=False)

@@ -25,16 +25,42 @@ def ensure_schema_compatibility():
     """Preserve existing ERP student rows while adding role-based identities."""
     inspector = inspect(engine)
     tables = inspector.get_table_names()
-    if "erp_students" in tables and "role" not in {column["name"] for column in inspector.get_columns("erp_students")}:
+    if "erp_students" in tables:
+        present = {column["name"] for column in inspector.get_columns("erp_students")}
+        additions = {
+            "role": "VARCHAR(20) NOT NULL DEFAULT 'student'",
+            "parent_phone": "VARCHAR(16)",
+            "parent_whatsapp_opt_in": "BOOLEAN NOT NULL DEFAULT FALSE",
+        }
         with engine.begin() as connection:
             qualifier = " IF NOT EXISTS" if engine.dialect.name == "postgresql" else ""
-            connection.execute(text(
-                f"ALTER TABLE erp_students ADD COLUMN{qualifier} role VARCHAR(20) NOT NULL DEFAULT 'student'"
-            ))
+            for name, definition in additions.items():
+                if name not in present:
+                    connection.execute(text(
+                        f"ALTER TABLE erp_students ADD COLUMN{qualifier} {name} {definition}"
+                    ))
     if "erp_courses" in tables and "credits" not in {column["name"] for column in inspector.get_columns("erp_courses")}:
         with engine.begin() as connection:
             qualifier = " IF NOT EXISTS" if engine.dialect.name == "postgresql" else ""
             connection.execute(text(f"ALTER TABLE erp_courses ADD COLUMN{qualifier} credits FLOAT"))
+    if "erp_attendance_records" in tables:
+        present = {column["name"] for column in inspector.get_columns("erp_attendance_records")}
+        if "source" not in present:
+            with engine.begin() as connection:
+                qualifier = " IF NOT EXISTS" if engine.dialect.name == "postgresql" else ""
+                connection.execute(text(
+                    f"ALTER TABLE erp_attendance_records ADD COLUMN{qualifier} "
+                    "source VARCHAR(20) NOT NULL DEFAULT 'online'"
+                ))
+    if "erp_whatsapp_notifications" in tables:
+        present = {column["name"] for column in inspector.get_columns("erp_whatsapp_notifications")}
+        if "attendance_source" not in present:
+            with engine.begin() as connection:
+                qualifier = " IF NOT EXISTS" if engine.dialect.name == "postgresql" else ""
+                connection.execute(text(
+                    f"ALTER TABLE erp_whatsapp_notifications ADD COLUMN{qualifier} "
+                    "attendance_source VARCHAR(20) NOT NULL DEFAULT 'online'"
+                ))
 
 
 def get_db():

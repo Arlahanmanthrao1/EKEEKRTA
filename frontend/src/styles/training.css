@@ -1,0 +1,91 @@
+.training-stats { margin-bottom: 24px; }
+.training-batches-layout { display: grid; gap: 22px; }
+.training-batches-layout.with-builder { grid-template-columns: minmax(0, 1.55fr) minmax(320px, .75fr); align-items: start; }
+.training-batch-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.training-batch-card { display: grid; gap: 11px; padding: 19px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface-subtle); }
+.training-batch-card h3, .training-batch-card p { margin: 0; }
+.training-batch-card > p { color: var(--ink-muted); }
+.training-batch-card dl { display: grid; gap: 8px; margin: 4px 0; }
+.training-batch-card dl div { display: flex; justify-content: space-between; gap: 12px; }
+.training-batch-card dt { color: var(--ink-muted); font-size: 12px; }
+.training-batch-card dd { margin: 0; text-align: right; font-size: 12px; font-weight: 600; }
+.batch-builder { position: sticky; top: 92px; }
+.two-field-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.program-builder { margin-bottom: 18px; padding: 13px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-subtle); }
+.program-builder summary { cursor: pointer; font-weight: 700; }
+.program-builder form { margin-top: 14px; }
+.batch-status-planned { color: var(--blue); background: var(--blue-soft); }
+.batch-status-active, .pill-success { color: var(--green, #08775b); background: var(--mint-soft); }
+.batch-status-completed { color: #6741c9; background: #eee9ff; }
+.batch-status-archived { color: var(--ink-muted); background: var(--surface-soft); }
+.back-link { display: inline-block; margin-bottom: 14px; color: var(--blue); font-weight: 600; text-decoration: none; }
+.training-batch-hero { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(320px, .8fr) auto; gap: 24px; align-items: center; margin-bottom: 22px; padding: 26px; background: linear-gradient(125deg, var(--surface), var(--blue-soft)); }
+.training-batch-hero h1 { margin: 5px 0 7px; font-size: clamp(28px, 4vw, 42px); }
+.training-batch-hero p { margin: 4px 0; color: var(--ink-muted); }
+.batch-hero-facts { display: grid; gap: 10px; }
+.batch-hero-facts div { display: grid; gap: 3px; padding: 10px 12px; border-left: 3px solid var(--blue); background: color-mix(in srgb, var(--surface) 75%, transparent); }
+.batch-hero-facts small { color: var(--ink-muted); }
+.batch-hero-facts strong { font-size: 13px; }
+.batch-hero-actions { display: grid; gap: 10px; min-width: 150px; }
+.compact-field-label { display: grid; gap: 4px; color: var(--ink-muted); font-size: 11px; }
+.batch-workspace-grid { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 22px; align-items: start; }
+.batch-workspace-main, .batch-workspace-side { display: grid; gap: 22px; }
+.batch-workspace-side { position: sticky; top: 92px; }
+.module-list { display: grid; gap: 14px; }
+.module-card { overflow: hidden; border: 1px solid var(--border); border-radius: 12px; }
+.module-card > header { display: grid; grid-template-columns: 34px 1fr auto; gap: 12px; align-items: start; padding: 15px; background: var(--surface-subtle); }
+.module-card > header > span:first-child { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 8px; color: white; background: var(--blue); font-weight: 700; }
+.module-card h3, .module-card p { margin: 0; }
+.module-card header p { margin-top: 4px; color: var(--ink-muted); font-size: 13px; }
+.order-controls { display: flex; gap: 5px; align-items: center; justify-content: flex-end; }
+.order-controls button { display: grid; place-items: center; width: 27px; height: 27px; padding: 0; border: 1px solid var(--border); border-radius: 7px; color: var(--blue); background: var(--surface); cursor: pointer; }
+.order-controls button:disabled { opacity: .4; cursor: not-allowed; }
+.module-card ol { margin: 0; padding: 0; list-style: none; }
+.module-card li { display: flex; justify-content: space-between; gap: 14px; align-items: center; padding: 13px 15px; border-top: 1px solid var(--border); }
+.module-card li p { margin-top: 4px; color: var(--ink-muted); font-size: 12px; }
+.module-card li a { color: var(--blue); font-size: 12px; }
+.inline-lesson-form { display: grid; grid-template-columns: 1fr 1fr auto; gap: 9px; padding: 13px; border-top: 1px dashed var(--border-strong); }
+.module-builder { display: grid; gap: 10px; margin-top: 18px; padding: 16px; border: 1px dashed var(--border-strong); border-radius: 12px; }
+.module-builder h3 { margin: 0; }
+.module-builder textarea { min-height: 80px; resize: vertical; }
+.batch-schedule-form { display: grid; grid-template-columns: 1fr minmax(210px, .65fr) auto; gap: 10px; margin: 14px 0 18px; }
+.class-ledger { display: grid; gap: 9px; }
+.class-ledger article { display: flex; justify-content: space-between; gap: 14px; align-items: center; padding: 13px; border: 1px solid var(--border); border-radius: 10px; }
+.class-ledger article > div { display: flex; flex-wrap: wrap; gap: 9px; align-items: center; }
+.class-ledger time { color: var(--ink-muted); font-size: 12px; }
+.progress-ledger { display: grid; gap: 12px; }
+.progress-ledger > article { display: grid; grid-template-columns: minmax(160px, .65fr) minmax(180px, 1fr) minmax(220px, 1fr) auto; gap: 14px; align-items: center; padding: 15px; border: 1px solid var(--border); border-radius: 11px; }
+.progress-ledger h3, .progress-ledger p { margin: 0; }
+.progress-ledger p { color: var(--ink-muted); font-size: 12px; }
+.batch-progress { position: relative; height: 25px; overflow: hidden; border-radius: 999px; background: var(--surface-soft); }
+.batch-progress span { display: block; height: 100%; background: linear-gradient(90deg, var(--blue), var(--mint)); }
+.batch-progress strong { position: absolute; inset: 0; display: grid; place-items: center; font-size: 11px; }
+.progress-breakdown { display: flex; flex-wrap: wrap; gap: 6px 12px; color: var(--ink-muted); font-size: 11px; }
+.compact-roster { display: grid; gap: 8px; }
+.csv-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.compact-roster article { display: flex; justify-content: space-between; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.compact-roster article div { display: grid; gap: 3px; min-width: 0; }
+.compact-roster article span { overflow: hidden; color: var(--ink-muted); font-size: 11px; text-overflow: ellipsis; }
+.text-danger-button { padding: 0; border: 0; color: var(--coral, #b42318); background: transparent; cursor: pointer; }
+.print-certificate { display: none; }
+@media (max-width: 1100px) {
+  .training-batches-layout.with-builder, .batch-workspace-grid { grid-template-columns: 1fr; }
+  .batch-builder, .batch-workspace-side { position: static; }
+  .training-batch-hero { grid-template-columns: 1fr 1fr; }
+  .batch-hero-actions { grid-column: 1 / -1; display: flex; }
+  .progress-ledger > article { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 700px) {
+  .training-batch-grid, .two-field-row, .training-batch-hero { grid-template-columns: 1fr; }
+  .inline-lesson-form, .batch-schedule-form, .progress-ledger > article { grid-template-columns: 1fr; }
+  .module-card > header { grid-template-columns: 34px 1fr; }
+  .module-card > header .order-controls { grid-column: 2; justify-self: start; }
+  .module-card li, .class-ledger article { align-items: stretch; flex-direction: column; }
+}
+@media print {
+  .portal-sidebar, .portal-topbar, .portal-content > :not(.print-certificate) { display: none !important; }
+  .portal-main, .portal-content { margin: 0 !important; padding: 0 !important; }
+  .print-certificate { display: grid; place-items: center; width: 100%; min-height: 95vh; padding: 60px; border: 12px double #154f8b; text-align: center; color: #172033; background: white; break-after: page; }
+  .print-certificate h1 { margin: 28px 0 8px; font-size: 46px; }
+  .print-certificate h2 { margin: 8px 0; color: #154f8b; font-size: 32px; }
+}

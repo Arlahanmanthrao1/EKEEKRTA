@@ -1,5 +1,6 @@
 import os
 import secrets
+from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, Header, HTTPException
@@ -9,9 +10,13 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import Base, engine, ensure_schema_compatibility, get_db
-from app.models import AcademicResult, AttendanceRecord, Course, Student, SyncReceipt
+from app.models import (AcademicResult, AttendanceRecord, Course, OfflineClassSession,
+                        Student, SyncReceipt, WhatsAppNotification)
+from app.integrations.whatsapp import (configuration_status, notification_payload,
+                                       send_absence_notification)
 from app.schemas import (AttendanceSyncIn, CourseSyncIn, ERPResultUpsert, ERPStudentCreate,
-                         ERPUserCreate, InstitutionRef, StudentSyncIn)
+                         ERPUserCreate, InstitutionRef, OfflineAttendanceCreate,
+                         StudentSyncIn)
 
 on_vercel = bool(os.getenv("VERCEL"))
 configured_token = settings.erp_api_token.get_secret_value()
@@ -42,6 +47,23 @@ def require_institution(institution: InstitutionRef) -> str:
     if expected and institution.external_id != expected:
         raise HTTPException(403, "This ERP does not accept records for that institution")
     return institution.external_id or f"ekeekrta:{institution.ekeekrta_id}"
+
+
+def _same_or_open(course_value, student_value) -> bool:
+    return not course_value or (
+        student_value is not None
+        and str(course_value).strip().casefold() == str(student_value).strip().casefold()
+    )
+
+
+def _course_matches_student(course: Course, student: Student) -> bool:
+    return all((
+        _same_or_open(course.department, student.department),
+        _same_or_open(course.program, student.program),
+        _same_or_open(course.batch, student.batch),
+        course.semester_number is None or course.semester_number == student.semester_number,
+        _same_or_open(course.section, student.section),
+    ))
 
 
 def already_received(db: Session, idempotency_key: str, event_type: str) -> bool:
@@ -107,6 +129,85 @@ def export_academic_result(institutional_id: str, db: Session = Depends(get_db))
                        "updated_at": row.updated_at}}
 
 
+@app.get("/api/academic-register-directory", dependencies=[Depends(require_token)])
+def academic_register_directory(db: Session = Depends(get_db)):
+    institution_id = settings.erp_institution_id.strip() or None
+    query = db.query(Student).filter(
+        Student.institution_external_id == institution_id,
+        Student.role == "student",
+    ).order_by(Student.institutional_id.asc())
+    rows = query.limit(5001).all()
+    if len(rows) > 5000:
+        raise HTTPException(422, "Academic register directory exceeds 5,000 students")
+    return {"students": [
+        {"institutional_id": row.institutional_id, "name": row.name,
+         "department": row.department, "program": row.program,
+         "semester_number": row.semester_number, "section": row.section}
+        for row in rows
+    ]}
+
+
+@app.get("/api/academic-register/{institutional_id}", dependencies=[Depends(require_token)])
+def academic_register(institutional_id: str, db: Session = Depends(get_db)):
+    """Return one student's real course and date-wise meeting attendance register."""
+    institution_id = settings.erp_institution_id.strip() or None
+    student = db.query(Student).filter(
+        Student.institution_external_id == institution_id,
+        Student.institutional_id == institutional_id,
+        Student.role == "student",
+    ).first()
+    if not student:
+        raise HTTPException(404, "Student not found in this ERP")
+
+    course_rows = db.query(Course).filter(
+        Course.institution_external_id == institution_id,
+    ).order_by(Course.code.asc()).all()
+    courses = [course for course in course_rows if _course_matches_student(course, student)]
+    attendance_query = db.query(AttendanceRecord).filter(
+        AttendanceRecord.institution_external_id == institution_id,
+        AttendanceRecord.student_institutional_id == student.institutional_id,
+    ).order_by(AttendanceRecord.session_started_at.asc(), AttendanceRecord.course_code.asc())
+    attendance = attendance_query.limit(10001).all()
+    if len(attendance) > 10000:
+        raise HTTPException(422, "Academic register exceeds 10,000 attendance records")
+
+    known_codes = {course.code for course in courses}
+    course_payload = [
+        {"code": course.code, "name": course.name, "course_type": course.course_type}
+        for course in courses
+    ]
+    # A synchronized attendance record remains valid evidence even when its
+    # course directory event has not arrived yet.
+    for record in attendance:
+        if record.course_code not in known_codes:
+            course_payload.append({"code": record.course_code, "name": record.course_name,
+                                   "course_type": None})
+            known_codes.add(record.course_code)
+    course_payload.sort(key=lambda item: item["code"].casefold())
+
+    return {
+        "student": {
+            "institutional_id": student.institutional_id,
+            "name": student.name,
+            "department": student.department,
+            "program": student.program,
+            "batch": student.batch,
+            "semester_number": student.semester_number,
+            "section": student.section,
+        },
+        "courses": course_payload,
+        "attendance": [
+            {"course_code": record.course_code, "course_name": record.course_name,
+             "class_session_id": record.class_session_id, "present": record.present,
+             "duration_minutes": record.duration_minutes,
+             "source": record.source,
+             "session_started_at": record.session_started_at,
+             "session_ended_at": record.session_ended_at}
+            for record in attendance
+        ],
+    }
+
+
 def _upsert_erp_user(payload: ERPUserCreate, db: Session):
     institution_id = settings.erp_institution_id.strip() or None
     row = db.query(Student).filter(
@@ -122,11 +223,14 @@ def _upsert_erp_user(payload: ERPUserCreate, db: Session):
                       institutional_id=payload.institutional_id, name=payload.name,
                       email=str(payload.email).lower(), role=payload.role)
         db.add(row)
-    for field in ("role", "institutional_id", "name", "department", "program", "batch", "semester_number", "section"):
+    for field in ("role", "institutional_id", "name", "department", "program", "batch",
+                  "semester_number", "section", "parent_phone", "parent_whatsapp_opt_in"):
         setattr(row, field, getattr(payload, field))
     if payload.role != "student":
         row.program = row.batch = row.section = None
         row.semester_number = None
+        row.parent_phone = None
+        row.parent_whatsapp_opt_in = False
     row.email = str(payload.email).lower()
     db.commit(); db.refresh(row)
     return {"status": "created" if created else "updated", "institutional_id": row.institutional_id,
@@ -143,6 +247,156 @@ def create_or_update_erp_user(payload: ERPUserCreate, db: Session = Depends(get_
 def create_or_update_erp_student(payload: ERPStudentCreate, db: Session = Depends(get_db)):
     """Create or update a real student master record directly in the ERP Sandbox."""
     return _upsert_erp_user(ERPUserCreate(role="student", **payload.model_dump()), db)
+
+
+@app.get("/api/offline-attendance/roster", dependencies=[Depends(require_token)])
+def offline_attendance_roster(course_code: str, db: Session = Depends(get_db)):
+    """Return the verified ERP roster for one course before faculty submission."""
+    institution_id = settings.erp_institution_id.strip() or None
+    course = db.query(Course).filter(
+        Course.institution_external_id == institution_id,
+        Course.code == course_code,
+    ).first()
+    if not course:
+        raise HTTPException(404, "Course not found in this ERP")
+    students = db.query(Student).filter(
+        Student.institution_external_id == institution_id,
+        Student.role == "student",
+    ).order_by(Student.institutional_id.asc()).all()
+    roster = [student for student in students if _course_matches_student(course, student)]
+    faculty = db.query(Student).filter(
+        Student.institution_external_id == institution_id,
+        Student.role == "faculty",
+    ).order_by(Student.name.asc()).all()
+    return {
+        "course": {"code": course.code, "name": course.name,
+                   "faculty_institutional_id": course.faculty_institutional_id},
+        "faculty": [{"institutional_id": row.institutional_id, "name": row.name}
+                    for row in faculty],
+        "students": [{"institutional_id": row.institutional_id, "name": row.name,
+                      "department": row.department, "section": row.section}
+                     for row in roster],
+    }
+
+
+@app.get("/api/offline-attendance/courses", dependencies=[Depends(require_token)])
+def offline_attendance_courses(db: Session = Depends(get_db)):
+    institution_id = settings.erp_institution_id.strip() or None
+    rows = db.query(Course).filter(
+        Course.institution_external_id == institution_id,
+    ).order_by(Course.code.asc()).limit(5001).all()
+    if len(rows) > 5000:
+        raise HTTPException(422, "Offline attendance course directory exceeds 5,000 courses")
+    return {"courses": [
+        {"code": row.code, "name": row.name, "credits": row.credits,
+         "department": row.department, "course_type": row.course_type,
+         "program": row.program, "batch": row.batch,
+         "semester_number": row.semester_number, "section": row.section,
+         "faculty_institutional_id": row.faculty_institutional_id,
+         "faculty_name": row.faculty_name}
+        for row in rows
+    ]}
+
+
+@app.post("/api/offline-attendance", dependencies=[Depends(require_token)], status_code=201)
+def submit_offline_attendance(payload: OfflineAttendanceCreate, db: Session = Depends(get_db)):
+    """Finalize one physical class and alert opted-in parents for submitted absences."""
+    institution_id = settings.erp_institution_id.strip() or None
+    if payload.held_at > datetime.now(timezone.utc) + timedelta(minutes=5):
+        raise HTTPException(422, "Offline attendance can be submitted only for a class already held")
+    course = db.query(Course).filter(
+        Course.institution_external_id == institution_id,
+        Course.code == payload.course_code,
+    ).first()
+    if not course:
+        raise HTTPException(404, "Course not found in this ERP")
+    faculty = db.query(Student).filter(
+        Student.institution_external_id == institution_id,
+        Student.institutional_id == payload.faculty_institutional_id,
+        Student.role == "faculty",
+    ).first()
+    if not faculty:
+        raise HTTPException(404, "Faculty member not found in this ERP")
+    if (course.faculty_institutional_id and
+            course.faculty_institutional_id.casefold() != faculty.institutional_id.casefold()):
+        raise HTTPException(403, "Only the faculty assigned to this course can submit attendance")
+
+    students = db.query(Student).filter(
+        Student.institution_external_id == institution_id,
+        Student.role == "student",
+    ).order_by(Student.institutional_id.asc()).all()
+    roster = [student for student in students if _course_matches_student(course, student)]
+    roster_by_id = {row.institutional_id.casefold(): row for row in roster}
+    submitted = {entry.student_institutional_id.casefold(): entry for entry in payload.attendance}
+    if set(submitted) != set(roster_by_id):
+        missing = sorted(row.institutional_id for key, row in roster_by_id.items() if key not in submitted)
+        unknown = sorted(entry.student_institutional_id for key, entry in submitted.items()
+                         if key not in roster_by_id)
+        detail = "Submit one attendance status for every student in the verified course roster"
+        if missing:
+            detail += f"; missing: {', '.join(missing[:10])}"
+        if unknown:
+            detail += f"; not in roster: {', '.join(unknown[:10])}"
+        raise HTTPException(422, detail)
+
+    offline_class = OfflineClassSession(
+        institution_external_id=institution_id,
+        submission_id=str(payload.submission_id),
+        course_code=course.code,
+        course_name=course.name,
+        faculty_institutional_id=faculty.institutional_id,
+        faculty_name=faculty.name,
+        held_at=payload.held_at,
+        duration_minutes=payload.duration_minutes,
+    )
+    db.add(offline_class)
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "This offline class attendance was already submitted") from None
+
+    ended_at = payload.held_at + timedelta(minutes=payload.duration_minutes)
+    records = []
+    for index, student in enumerate(roster, start=1):
+        entry = submitted[student.institutional_id.casefold()]
+        record = AttendanceRecord(
+            institution_external_id=institution_id,
+            # Online EKEEKRTA IDs are positive. A stable negative namespace
+            # keeps ERP-entered classes distinct without changing sync IDs.
+            ekeekrta_id=-(offline_class.id * 1000 + index),
+            student_institutional_id=student.institutional_id,
+            student_name=student.name,
+            course_code=course.code,
+            course_name=course.name,
+            class_session_id=-offline_class.id,
+            duration_minutes=float(payload.duration_minutes if entry.present else 0),
+            present=entry.present,
+            session_started_at=payload.held_at,
+            session_ended_at=ended_at,
+            source="offline",
+        )
+        db.add(record)
+        records.append((record, student))
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "Offline attendance could not be finalized") from None
+
+    notifications = []
+    for record, student in records:
+        if not record.present:
+            notifications.append(send_absence_notification(db, record, student))
+    return {
+        "status": "finalized",
+        "offline_class_id": offline_class.id,
+        "course_code": course.code,
+        "students": len(records),
+        "present": sum(1 for record, _ in records if record.present),
+        "absent": sum(1 for record, _ in records if not record.present),
+        "whatsapp_notifications": notifications,
+    }
 
 
 @app.post("/api/results", dependencies=[Depends(require_token)], status_code=201)
@@ -237,30 +491,97 @@ def sync_attendance(payload: AttendanceSyncIn, idempotency_key: str = Depends(re
     row.present = payload.attendance.present
     row.session_started_at = payload.class_session.scheduled_at
     row.session_ended_at = payload.class_session.ended_at
+    row.source = "online"
     try:
         db.commit()
     except IntegrityError:
         db.rollback()
         raise HTTPException(409, "Attendance record could not be synchronized") from None
-    return {"status": "synced", "attendance_id": row.ekeekrta_id, "present": row.present}
+    student = db.query(Student).filter(
+        Student.institution_external_id == institution_id,
+        Student.institutional_id == row.student_institutional_id,
+        Student.role == "student",
+    ).first()
+    notification = (send_absence_notification(db, row, student) if student else
+                    {"status": "student_not_registered"})
+    return {"status": "synced", "attendance_id": row.ekeekrta_id, "present": row.present,
+            "whatsapp_notification": notification}
+
+
+@app.get("/api/whatsapp-notifications", dependencies=[Depends(require_token)])
+def whatsapp_notifications(db: Session = Depends(get_db)):
+    institution_id = settings.erp_institution_id.strip() or None
+    rows = db.query(WhatsAppNotification).filter(
+        WhatsAppNotification.institution_external_id == institution_id,
+    ).order_by(WhatsAppNotification.created_at.desc()).limit(500).all()
+    return {"configuration": configuration_status(),
+            "notifications": [notification_payload(row) for row in rows]}
+
+
+@app.post("/api/whatsapp-notifications/{notification_id}/retry",
+          dependencies=[Depends(require_token)])
+def retry_whatsapp_notification(notification_id: int, db: Session = Depends(get_db)):
+    institution_id = settings.erp_institution_id.strip() or None
+    notification = db.query(WhatsAppNotification).filter(
+        WhatsAppNotification.id == notification_id,
+        WhatsAppNotification.institution_external_id == institution_id,
+    ).first()
+    if not notification:
+        raise HTTPException(404, "WhatsApp notification not found")
+    attendance = db.query(AttendanceRecord).filter(
+        AttendanceRecord.id == notification.attendance_record_id,
+        AttendanceRecord.institution_external_id == institution_id,
+    ).first()
+    student = db.query(Student).filter(
+        Student.institution_external_id == institution_id,
+        Student.institutional_id == notification.student_institutional_id,
+        Student.role == "student",
+    ).first()
+    if not attendance or not student:
+        raise HTTPException(409, "The attendance or student record is no longer available")
+    return send_absence_notification(db, attendance, student)
 
 
 @app.get("/api/dashboard", dependencies=[Depends(require_token)])
 def dashboard_data(db: Session = Depends(get_db)):
     limit = settings.recent_record_limit
     users = db.query(Student)
+    def dashboard_user(row: Student) -> dict:
+        return {
+            "id": row.id,
+            "institution_external_id": row.institution_external_id,
+            "role": row.role,
+            "institutional_id": row.institutional_id,
+            "name": row.name,
+            "email": row.email,
+            "department": row.department,
+            "program": row.program,
+            "batch": row.batch,
+            "semester_number": row.semester_number,
+            "section": row.section,
+            "parent_phone_last4": row.parent_phone[-4:] if row.parent_phone else None,
+            "parent_whatsapp_opt_in": row.parent_whatsapp_opt_in,
+            "synced_at": row.synced_at,
+        }
+
     return {
         "name": settings.erp_name,
         "institution_id": settings.erp_institution_id or None,
         "counts": {"users": users.count(), "students": users.filter(Student.role == "student").count(),
                    "faculty": users.filter(Student.role == "faculty").count(),
                    "hod": users.filter(Student.role == "hod").count(), "courses": db.query(Course).count(),
-                   "attendance": db.query(AttendanceRecord).count(), "results": db.query(AcademicResult).count()},
-        "users": users.order_by(Student.synced_at.desc()).limit(limit).all(),
-        "students": users.filter(Student.role == "student").order_by(Student.synced_at.desc()).limit(limit).all(),
+                   "attendance": db.query(AttendanceRecord).count(), "results": db.query(AcademicResult).count(),
+                   "offline_classes": db.query(OfflineClassSession).count(),
+                   "whatsapp_alerts": db.query(WhatsAppNotification).count()},
+        "users": [dashboard_user(row) for row in users.order_by(Student.synced_at.desc()).limit(limit).all()],
+        "students": [dashboard_user(row) for row in users.filter(Student.role == "student")
+                     .order_by(Student.synced_at.desc()).limit(limit).all()],
         "courses": db.query(Course).order_by(Course.synced_at.desc()).limit(limit).all(),
         "attendance": db.query(AttendanceRecord).order_by(AttendanceRecord.synced_at.desc()).limit(limit).all(),
         "results": db.query(AcademicResult).order_by(AcademicResult.updated_at.desc()).limit(limit).all(),
+        "whatsapp": configuration_status(),
+        "whatsapp_notifications": db.query(WhatsAppNotification).order_by(
+            WhatsAppNotification.created_at.desc()).limit(limit).all(),
     }
 
 

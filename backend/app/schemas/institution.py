@@ -5,6 +5,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, HttpUrl, TypeAdapter, ValidationError, field_validator, model_validator
 
+from app.models.institution import InstitutionStatus, InstitutionType
+
 
 HTTPS_URL = TypeAdapter(HttpUrl)
 LOGO_DATA = re.compile(r"^data:image/(png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})$")
@@ -18,9 +20,11 @@ class InstitutionOut(BaseModel):
     email_domain: str
     logo_url: str | None = None
     address: str | None = None
+    institution_type: InstitutionType = InstitutionType.university
     default_theme: Literal["light", "dark", "system"] = "light"
     grading_scale_max: float = 10
     passing_grade_point: float = 4
+    status: InstitutionStatus = InstitutionStatus.active
 
 
 class InstitutionThemeUpdate(BaseModel):
@@ -74,6 +78,10 @@ class InstitutionProfile(BaseModel):
         if parsed.scheme != "https":
             raise ValueError("Use an HTTPS logo link")
         return str(parsed)
+
+
+class InstitutionRegistrationProfile(InstitutionProfile):
+    institution_type: InstitutionType
 
 
 class DepartmentCreate(BaseModel):

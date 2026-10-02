@@ -206,7 +206,7 @@ older setup notes may describe steps before the latest push/deployment.
 6. NOT COMPLETED / NOT CLAIMED AS WORKING TODAY
 -----------------------------------------------------------------------------
 - College-hosted Jitsi infrastructure and verified college-scale capacity.
-- AI plagiarism detection and AI-generated lecture summaries.
+- AI-generated lecture summaries.
 - Real browser file uploads (current workflows use hosted file URLs).
 - A real hosted college ERP connection (the optional service is simulated).
 - A complete production security audit and migration-managed schema lifecycle.
@@ -1178,3 +1178,119 @@ institution-only onboarding workflow is documented below.
   Backend health, login/recovery routes and published UI bundle checks passed on
   Vercel. The source is committed and pushed to GitHub. SMTP and Google OAuth
   remain disabled until their real environment values are configured.
+
+-----------------------------------------------------------------------------
+46. UNIVERSITY AND TRAINING-INSTITUTION ONBOARDING — 19 SEPTEMBER 2026 (DEPLOYED)
+-----------------------------------------------------------------------------
+- Institution registration now requires one explicit type: University or
+  Training institution. The selected type is stored with the institution and
+  returned with authenticated user profiles; existing institutions safely
+  default to University for backward compatibility.
+- University accounts retain the optional institution-scoped ERP connector.
+  Training institutions keep courses, classes, assignments, quizzes,
+  attendance, programming assessments, AI, account management and dashboard
+  features, but ERP integration is not available.
+- The training-institution experience removes ERP navigation, dashboard actions,
+  AI import prompts and ERP CGPA refresh controls. Direct `/erp` API requests
+  are rejected with HTTP 403, and the outbound event layer refuses to queue or
+  deliver ERP records for a training institution. This is an authorization rule,
+  not only a hidden menu item.
+- Training institutions use Trainer instead of Faculty and Domain instead of
+  Department throughout administrator registration and navigation. They have
+  no HOD account creation and no semester-promotion workflow; both operations
+  are also rejected by the backend if called directly.
+- Training student and trainer registration is intentionally separate from the
+  university form. It collects identity, institution email, Domain, official
+  learner/trainer ID and password without asking for program, batch, semester
+  or section. University registration keeps the complete academic cohort fields.
+- Training students now receive a separate portal structure with Home,
+  Learning and AI Assistant areas. Learning combines courses, enrolment,
+  assignments, quizzes, programming assessments, notes and study materials;
+  it never labels content as Academic or Non Academic. University students keep
+  the existing Academics and Non Academics separation.
+- Institution type is displayed read-only on the administrator institution
+  profile so an administrator can confirm how the tenant was registered.
+- Training course creation is presented to trainers as batch creation. Each
+  trainer connects their own Google account and selects a personal Drive folder
+  through Google Picker. EKEEKRTA uses the limited drive.file permission,
+  encrypts the trainer's refresh token, stores only the selected folder ID on
+  the batch, and never returns either secret through student/course APIs.
+- Self-hosted Jitsi/Jibri can automatically start trainer recordings after
+  moderator authorization. The private worker imports finalized recordings,
+  uploads training recordings to the selected folder using that trainer's
+  personal Drive authorization, and queues the same private media for AI
+  preparation. Drive success/failure and AI processing are tracked separately.
+  JaaS and Vercel do not silently claim this local recording path is available.
+- Verification passed: all 149 backend tests, the complete dashboard rendering
+  suite, the frontend production build, and whitespace validation. The Google
+  Drive network upload still needs Google OAuth/Picker credentials, a trainer
+  authorization and selected folder, plus a
+  working self-hosted Jibri host for an end-to-end recording test. The tested
+  application update is deployed to the existing production backend and
+  frontend projects. Self-hosted Jitsi/Jibri remains intentionally local and
+  was not published to Vercel.
+
+-----------------------------------------------------------------------------
+47. EKEEKRTA PLATFORM OPERATIONS PORTAL — 21 SEPTEMBER 2026 (DEPLOYED)
+-----------------------------------------------------------------------------
+- Added a separate `platform_admin` role for the Ekeekrta team. Platform
+  operators do not belong to any university or training-institution tenant and
+  can sign in only through `/platform-login` on the main Ekeekrta address.
+- Added a dedicated `/platform` portal with aggregate institution/user/course
+  counts, a pending-registration queue, searchable institution directory,
+  university/training filters, and a security audit page.
+- New self-service institution registrations now begin as Pending. Their first
+  administrator account is preserved but cannot sign in until an Ekeekrta
+  operator approves the institution. Existing institutions remain Active.
+- Operators can approve, suspend, reject, or reactivate an institution.
+  Suspension and rejection require a reason, block every tenant request, and
+  invalidate all current institution sessions. Each status change records the
+  operator, institution, previous/new status, reason, and timestamp.
+- The platform API returns only onboarding identity and aggregate usage. It
+  does not expose passwords, API tokens, marks, submissions, meeting content,
+  or other tenant academic records. Institution admins receive HTTP 403 from
+  every platform-operations endpoint.
+- Added a local-only bootstrap script for creating the first operator directly
+  in the deployed Neon database, with hidden/clipboard connection-string input
+  and no public account-creation API. Setup and security behavior are described
+  in `EKEEKRTA_OPERATIONS.md`.
+- Verification passed: all 154 backend tests, the platform-specific access and
+  lifecycle tests, the frontend production build, dashboard component checks,
+  and whitespace validation. The browser-only registration check was not run
+  because no development server was active.
+- Deployed the backend and frontend to the existing Vercel production projects.
+  Public verification passed: the backend root health check returns HTTP 200,
+  invalid platform credentials reach the new endpoint and return HTTP 401,
+  CORS permits https://ekeekrta.vercel.app, `/platform-login` and `/login`
+  return HTTP 200, and the published frontend bundle contains the platform
+  login and summary routes. This deployment did not push or commit source code.
+
+-----------------------------------------------------------------------------
+48. GUARDED INSTITUTION DELETION — 21 SEPTEMBER 2026 (DEPLOYED)
+-----------------------------------------------------------------------------
+- Ekeekrta platform operators can permanently delete either a university or a
+  training institution from the Institutions directory. An active or pending
+  institution cannot be deleted directly: it must first be suspended or
+  rejected, preventing a single accidental click from removing a live tenant.
+- Permanent deletion requires the exact institution name and a deletion reason.
+  It transactionally removes that tenant's Ekeekrta accounts, courses,
+  enrolments, meetings, attendance, assignments, quizzes, programming work,
+  materials, AI records, ERP configuration and encrypted Google Drive tokens.
+  If any database dependency cannot be removed, the transaction rolls back.
+- Local private recording files are removed on a best-effort basis after the
+  database commit. Copies already sent to an external ERP or a trainer's
+  personal Google Drive are explicitly outside this deletion and the interface
+  warns the operator before confirmation.
+- Earlier platform audit rows are retained without their deleted foreign key.
+  A final non-sensitive deletion record preserves the operator, deleted tenant
+  identity, reason and aggregate user/course counts without retaining academic
+  content or secrets.
+- Verification passed: all 155 backend tests and 92 subtests, the production
+  frontend build and dashboard rendering checks. No real institution was
+  deleted during testing.
+- Deployed to the existing backend and frontend Vercel production projects.
+  Public verification passed: the backend health check returns HTTP 200, an
+  unauthenticated DELETE request is blocked with HTTP 401, DELETE preflight
+  allows only the configured Ekeekrta frontend origin, the public institution
+  directory returns HTTP 200, and its published bundle contains both guarded
+  deletion controls. This deployment did not commit or push source code.

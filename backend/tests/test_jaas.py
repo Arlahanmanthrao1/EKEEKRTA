@@ -19,9 +19,9 @@ from app.config import settings
 from app.database import Base, get_db
 from app.core.deps import get_current_user
 from app.models.user import User, UserRole
-from app.models.institution import Institution, Department
+from app.models.institution import Institution, Department, InstitutionType
 from app.models.course import Course, Enrollment
-from app.models.attendance import ClassSession
+from app.models.attendance import Attendance, ClassSession
 from app.routers.attendance import router
 
 
@@ -97,7 +97,8 @@ class JaaSTest(unittest.TestCase):
         self.assertEqual(data["room_name"], "vpaas-magic-cookie-test/lms-testroom")
         self.assertEqual(data["script_url"], "https://8x8.vc/vpaas-magic-cookie-test/external_api.js")
         self.assertEqual(jwt.get_unverified_header(data["jwt"])["kid"], settings.jaas_api_key_id)
-        self.assertEqual(data["recording"], {"available": False, "auto_start": False, "mode": "file"})
+        self.assertEqual(data["recording"], {"available": False, "auto_start": False, "mode": "file",
+            "reason": "Automatic server recording requires the self-hosted Jitsi and Jibri worker."})
         # Changing a signed claim must invalidate the token.
         forged = jwt.encode({**claims, "room": "other-room"}, "wrong-secret", algorithm="HS256")
         with self.assertRaises(JWTError):
@@ -131,6 +132,18 @@ class JaaSTest(unittest.TestCase):
         self.db.commit()
         self.assertEqual(self.connect().status_code, 409)
         self.read_key.assert_not_called()
+
+    def test_ending_class_marks_never_joined_enrolled_students_absent(self):
+        self.current_user = self.db.get(User, 1)
+        with patch("app.routers.attendance.enqueue_attendance_to_erp") as enqueue:
+            enqueue.return_value = None
+            response = self.client.patch("/attendance/sessions/1/end")
+        self.assertEqual(response.status_code, 200, response.text)
+        record = self.db.query(Attendance).filter_by(session_id=1, student_id=2).one()
+        self.assertFalse(record.present)
+        self.assertEqual(record.duration_minutes, 0)
+        self.assertIsNotNone(self.db.get(ClassSession, 1).ended_at)
+        enqueue.assert_called_once()
 
     def test_missing_and_mismatched_credentials_fail_closed(self):
         with patch.object(settings, "jaas_app_id", ""):
@@ -175,6 +188,32 @@ class JaaSTest(unittest.TestCase):
             response = self.connect()
             self.assertEqual(self.decode(response)["context"]["user"]["moderator"], "false")
             self.read_key.assert_not_called()
+
+    def test_training_auto_recording_requires_drive_destination_and_worker_credentials(self):
+        self.db.get(Institution, 1).institution_type = InstitutionType.training_institution.value
+        self.db.commit()
+        options = [patch.object(settings, "video_provider", "jitsi"),
+                   patch.object(settings, "jitsi_domain", "meet.college.example"),
+                   patch.object(settings, "jitsi_auto_recording_enabled", True),
+                   patch.object(settings, "jitsi_jwt_app_id", "ekeekrta"),
+                   patch.object(settings, "jitsi_jwt_app_secret", SecretStr("test-jitsi-secret"))]
+        for option in options: option.start(); self.addCleanup(option.stop)
+        missing = self.connect(1).json()["recording"]
+        self.assertFalse(missing["available"])
+        self.assertIn("no Google Drive recording folder", missing["reason"])
+        self.db.get(Course, 1).recording_drive_folder_id = "Folder_1234567890"
+        self.db.commit()
+        from app.models.google_drive import GoogleDriveConnection
+        from app.core.secret_box import encrypt_secret
+        self.db.add(GoogleDriveConnection(institution_id=1, user_id=1,
+            google_email="trainer@alpha.edu", encrypted_refresh_token=encrypt_secret("refresh-token"),
+            scopes="https://www.googleapis.com/auth/drive.file"))
+        self.db.commit()
+        with patch("app.integrations.video.drive_oauth_configured", return_value=True):
+            ready = self.connect(1).json()["recording"]
+        self.assertTrue(ready["available"])
+        self.assertTrue(ready["auto_start"])
+        self.assertIsNone(ready["reason"])
 
 
 if __name__ == "__main__":

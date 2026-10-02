@@ -6,12 +6,14 @@ export default function InstitutionProfile() {
   const { refreshUser } = useAuth();
   const [form, setForm] = useState(null);
   const [domain, setDomain] = useState("");
+  const [institutionType, setInstitutionType] = useState("university");
   const [loginAddress, setLoginAddress] = useState(null);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
   useEffect(() => { apiFetch("/institutions/current").then((value) => {
     setDomain(value.email_domain);
+    setInstitutionType(value.institution_type || "university");
     setForm({ name: value.name, email: value.email || "", logo_url: value.logo_url || "", address: value.address || "" });
   }).catch((err) => setError(err.message)); }, []);
   useEffect(() => { apiFetch("/institutions/current/login-address").then(setLoginAddress).catch((err) => setError(err.message)); }, []);
@@ -28,6 +30,7 @@ export default function InstitutionProfile() {
     {error && <p className="error-banner" role="alert">{error}</p>}
     {!form ? <p>Loading institution profile…</p> : <>
       <p>Registered email domain: <strong>@{domain}</strong>. All accounts belong to this institution.</p>
+      <p>Institution type: <strong>{institutionType === "training_institution" ? "Training institution" : "University"}</strong>. This selection controls which institution-level integrations are available.</p>
       {loginAddress && <div className="institution-login-address">
         <h3>Institution login address</h3><code>{loginAddress.url}</code>
         <p>{loginAddress.configured ? "Configured in EKEEKRTA. Your domain administrator must also complete the hosting and DNS setup; this status does not check public availability." : "Not connected yet. Ask your domain administrator to connect this address, then have the platform operator enable your institution portal."}</p>

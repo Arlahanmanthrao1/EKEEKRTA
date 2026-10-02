@@ -14,7 +14,9 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.secret_box import decrypt_secret
+from app.database import SessionLocal
 from app.models.erp import ERPIntegration, ERPSyncEvent
+from app.models.institution import Institution, InstitutionType
 
 
 ENDPOINTS = {"student": "students", "course": "courses", "attendance": "attendance"}
@@ -107,6 +109,9 @@ def fetch_erp_academic_result(integration: ERPIntegration, institutional_id: str
 
 def enqueue_event(db: Session, institution_id: int, event_type: str, entity_key: str,
                   payload: dict, *, commit: bool = True) -> ERPSyncEvent | None:
+    institution = db.get(Institution, institution_id)
+    if not institution or institution.institution_type != InstitutionType.university.value:
+        return None
     integration = db.query(ERPIntegration).filter(ERPIntegration.institution_id == institution_id).first()
     if not integration or not _is_allowed(integration, event_type):
         return None
@@ -134,6 +139,9 @@ def enqueue_event(db: Session, institution_id: int, event_type: str, entity_key:
 
 
 def deliver_event(db: Session, event: ERPSyncEvent) -> bool:
+    institution = db.get(Institution, event.institution_id)
+    if not institution or institution.institution_type != InstitutionType.university.value:
+        return False
     integration = db.query(ERPIntegration).filter(ERPIntegration.institution_id == event.institution_id).first()
     if not integration or not _is_allowed(integration, event.event_type):
         return False
@@ -165,6 +173,20 @@ def queue_and_deliver(db: Session, institution_id: int, event_type: str, entity_
     except SQLAlchemyError:
         db.rollback()
         return False
+
+
+def deliver_event_ids(event_ids: list[int]) -> None:
+    """Best-effort background delivery; durable outbox rows remain retryable."""
+    if not event_ids:
+        return
+    db = SessionLocal()
+    try:
+        for event_id in event_ids[:500]:
+            event = db.get(ERPSyncEvent, event_id)
+            if event and event.status in {"pending", "failed"}:
+                deliver_event(db, event)
+    finally:
+        db.close()
 
 
 def institution_ref(institution) -> dict:

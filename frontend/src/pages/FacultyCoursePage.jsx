@@ -39,7 +39,7 @@ export function ClassHistory({ sessions }) {
   </section>;
 }
 
-function CourseCreditsEditor({ course, onSaved }) {
+function CourseCreditsEditor({ course, onSaved, supportsERP = false }) {
   const [credits, setCredits] = useState(course.credits ?? "");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -47,7 +47,7 @@ function CourseCreditsEditor({ course, onSaved }) {
     event.preventDefault(); setBusy(true); setMessage("");
     try {
       await apiFetch(`/courses/${course.id}/credits`, { method: "PATCH", body: JSON.stringify({ credits: Number(credits) }) });
-      setMessage("Course credits saved and synchronized to the ERP when enabled."); onSaved();
+      setMessage(supportsERP ? "Course credits saved and synchronized to the ERP when enabled." : "Course credits saved."); onSaved();
     } finally { setBusy(false); }
   };
   return <section className="card panel-card course-credit-editor" id="course-settings"><div><p className="section-eyebrow">Academic configuration</p><h2>Course credits</h2><p>Credits are used in student CGPA what-if calculations. Enter the official curriculum value.</p></div><form onSubmit={save}><label className="field-label">Official credits<input className="field" type="number" min="0.5" max="50" step="0.5" value={credits} onChange={event => setCredits(event.target.value)} required /></label><button className="btn btn-soft" disabled={busy}>{busy ? "Saving…" : "Save credits"}</button></form>{message && <p className="success-banner" role="status">{message}</p>}</section>;
@@ -57,6 +57,7 @@ export default function FacultyCoursePage() {
   const { courseId } = useParams();
   const id = Number(courseId);
   const { user, logout } = useAuth();
+  const staffLabel = user.institution?.institution_type === "training_institution" ? "Trainer" : "Faculty";
   const navigate = useNavigate();
   const [data, setData] = useState({ course: null, assignments: [], quizzes: [], programming: [], materials: [], plans: [], sessions: [] });
   const [loading, setLoading] = useState(true);
@@ -119,21 +120,21 @@ export default function FacultyCoursePage() {
   }
 
   const refresh = () => setReload(value => value + 1);
-  if (loading) return <DashboardShell user={user} title="Course workspace" roleLabel="Faculty" onLogout={logout} activePage="courses"><p role="status">Loading course workspace…</p></DashboardShell>;
-  if (error && !data.course) return <DashboardShell user={user} title="Course workspace" roleLabel="Faculty" onLogout={logout} activePage="courses"><div className="error-banner" role="alert">{error}</div><Link className="btn btn-soft" to="/faculty/courses">← Back to your courses</Link></DashboardShell>;
+  if (loading) return <DashboardShell user={user} title="Course workspace" roleLabel={staffLabel} onLogout={logout} activePage="courses"><p role="status">Loading course workspace…</p></DashboardShell>;
+  if (error && !data.course) return <DashboardShell user={user} title="Course workspace" roleLabel={staffLabel} onLogout={logout} activePage="courses"><div className="error-banner" role="alert">{error}</div><Link className="btn btn-soft" to="/faculty/courses">← Back to your courses</Link></DashboardShell>;
   const { course, assignments, quizzes, programming, materials, plans, sessions } = data;
   const activeSession = sessions.find(session => !session.ended_at);
   const completedSessions = sessions.filter(session => session.ended_at);
   const upcomingPlan = nextScheduledPlan(plans);
   const heroAction = activeSession ? startNow : upcomingPlan ? () => scheduleAction(upcomingPlan, "start") : startNow;
-  return <DashboardShell user={user} title={course.name} roleLabel="Faculty" onLogout={logout} activePage="courses">
+  return <DashboardShell user={user} title={course.name} roleLabel={staffLabel} onLogout={logout} activePage="courses">
     <Link className="course-back-link" to="/faculty/courses">← All courses</Link>
     {shouldShowCourseHero(sessions, plans) ? <section className="course-workspace-hero"><div><div className="course-title-line"><span className="course-code">{course.code}</span><span className="pill pill-muted">{course.course_type === "non_academic" ? "Non-Academic" : "Academic"}</span></div><h1>{course.name}</h1>{upcomingPlan && !activeSession ? <div className="course-workspace-hero-plan"><span>Next scheduled class</span><strong>{upcomingPlan.title}</strong><time dateTime={upcomingPlan.starts_at}>{new Date(upcomingPlan.starts_at).toLocaleString()}</time></div> : <p>{course.department || "Department not set"} · {course.semester || "Semester not set"}</p>}</div><button className="btn btn-primary" disabled={busy} onClick={heroAction}><Icon name="video" /> {activeSession ? "Rejoin live class" : upcomingPlan ? "Start scheduled class" : "Start a new class"}</button></section> : <header className="course-workspace-compact-title"><div><div className="course-title-line"><span className="course-code">{course.code}</span><span className="pill pill-muted">{course.course_type === "non_academic" ? "Non-Academic" : "Academic"}</span></div><h1>{course.name}</h1><p>{course.department || "Department not set"} · {course.semester || "Semester not set"}</p></div><span className="pill class-ended-pill">Latest meeting ended</span></header>}
     {error && <p className="error-banner" role="alert">{error}</p>}
     {notice && <p className="schedule-notice" role="status">{notice}</p>}
     <nav className="course-section-nav" aria-label="Course workspace sections"><a href="#course-settings">Credits</a><a href="#classes">Classes</a><a href="#lecture-notes">Lecture notes</a><a href="#assignments">Assignments</a><a href="#quizzes">Quizzes</a><a href="#programming">Programming</a><a href="#students">Students</a><a href="#materials">Notes & materials</a></nav>
     <section className="stats-grid course-stats"><StatCard icon="assignments" label="Assignments" value={assignments.length} /><StatCard icon="quiz" label="Quizzes" value={quizzes.length} tone="purple" /><StatCard icon="code" label="Programming" value={programming.length} tone="amber" /><StatCard icon="calendar" label="Scheduled classes" value={plans.filter(plan => plan.status === "scheduled").length} tone="green" /><StatCard icon="video" label="Completed classes" value={completedSessions.length} /><StatCard icon="material" label="Materials" value={materials.length} tone="amber" /></section>
-    <CourseCreditsEditor course={course} onSaved={refresh} />
+    <CourseCreditsEditor course={course} onSaved={refresh} supportsERP={user.institution?.institution_type !== "training_institution"} />
 
     <div className="course-workspace-grid">
       <section className="card panel-card course-workspace-section" id="classes"><div className="section-title-row"><div><p className="section-eyebrow">Virtual classroom</p><h2>Classes and meetings</h2></div><button className="btn btn-soft" aria-expanded={openTool === "schedule"} onClick={() => setOpenTool(openTool === "schedule" ? null : "schedule")}>Schedule class</button></div>

@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class CourseCreate(BaseModel):
@@ -13,17 +13,11 @@ class CourseCreate(BaseModel):
     course_type: Literal["academic", "non_academic"] = "academic"
     program: str | None = Field(default=None, max_length=120)
     batch: str | None = Field(default=None, max_length=40)
+    recording_drive_folder_id: str | None = Field(default=None, min_length=10, max_length=180)
     semester_number: int | None = Field(default=None, ge=1, le=8)
     section: str | None = Field(default=None, max_length=40)
     enrollment_mode: Literal["compulsory", "elective"] = "elective"
     credits: float | None = Field(default=None, gt=0, le=50)
-
-    @model_validator(mode="after")
-    def require_academic_cohort(self):
-        if self.course_type == "academic" and (not self.program or not self.batch or self.semester_number is None):
-            raise ValueError("Academic courses require program, batch and semester")
-        return self
-
 
 class CourseOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -36,6 +30,7 @@ class CourseOut(BaseModel):
     course_type: Literal["academic", "non_academic"]
     program: str | None = None
     batch: str | None = None
+    recording_drive_folder_configured: bool = False
     semester_number: int | None = None
     section: str | None = None
     enrollment_mode: Literal["compulsory", "elective"]

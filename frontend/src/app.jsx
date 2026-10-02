@@ -21,21 +21,28 @@ import ChangePasswordPage from "./pages/ChangePasswordPage";
 import SettingsPage from "./pages/SettingsPage";
 import ForgotPasswordPage from "./pages/ForgotPasswordPage";
 import ResetPasswordPage from "./pages/ResetPasswordPage";
+import PlatformDashboard from "./pages/PlatformDashboard";
+import TrainingBatchesPage from "./pages/TrainingBatchesPage";
+import TrainingBatchPage from "./pages/TrainingBatchPage";
+import DataExchangePage from "./pages/DataExchangePage";
 import { ThemeProvider } from "./context/ThemeContext";
 
 function DashboardRouter() {
   const { user } = useAuth();
   const { page = "dashboard" } = useParams();
-  if (!isDashboardPage(user.role, page)) return <Navigate to={dashboardPath(user.role)} replace />;
+  if (!isDashboardPage(user.role, page, user.institution?.institution_type)) return <Navigate to={dashboardPath(user.role)} replace />;
   if (page === "settings") return <SettingsPage />;
   if (page === "ai-assistant") return <AIAssistantPage />;
   if (page === "ai-review" && user.role === "admin") return <AIReviewPage />;
+  if (page === "batches" && user.institution?.institution_type === "training_institution") return <TrainingBatchesPage />;
+  if (page === "data-exchange" && user.role === "faculty" && user.institution?.institution_type === "university") return <DataExchangePage />;
   if (page === "calendar" || (user.role === "student" && page === "timetable")) return <CalendarPage />;
   if (page === "schedule" && user.role === "faculty") return <SchedulePage />;
   if (user.role === "student") return <StudentDashboard />;
   if (user.role === "faculty") return <FacultyDashboard />;
   if (user.role === "admin") return <AdminDashboard />;
   if (user.role === "hod") return <HodDashboard />;
+  if (user.role === "platform_admin") return <PlatformDashboard />;
   return <p>Unknown role.</p>;
 }
 
@@ -49,6 +56,7 @@ function AppRoutes() {
     return (
       <Routes>
         <Route path="/login" element={<Login />} />
+        <Route path="/platform-login" element={institutionHost() ? <Navigate to="/login" replace /> : <Login platform />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route path="/register-institution" element={institutionHost() ? <Navigate to="/login" replace /> : <InstitutionRegistration />} />
@@ -66,8 +74,10 @@ function AppRoutes() {
       {user.role === "faculty" && <Route path="/faculty/courses/:courseId" element={<FacultyCoursePage />} />}
       {user.role === "student" && <Route path="/student/courses/:courseId" element={<StudentCoursePage />} />}
       {user.role === "student" && <Route path="/student/programming-assessments/:assessmentId" element={<ProgrammingAssessmentPage />} />}
-      <Route path={`/${user.role}/:page?`} element={<DashboardRouter />} />
-      <Route path="/classroom" element={<ClassroomPage />} />
+      {user.institution?.institution_type === "training_institution" && ["admin", "faculty", "student"].includes(user.role) &&
+        <Route path={`/${user.role}/training-batches/:batchId`} element={<TrainingBatchPage />} />}
+      <Route path={user.role === "platform_admin" ? "/platform/:page?" : `/${user.role}/:page?`} element={<DashboardRouter />} />
+      {user.role !== "platform_admin" && <Route path="/classroom" element={<ClassroomPage />} />}
       <Route path="*" element={<Navigate to={
         location.pathname === "/login" && location.state?.from?.startsWith(`/${user.role}/`)
           ? location.state.from : dashboardPath(user.role)

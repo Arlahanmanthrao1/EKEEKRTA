@@ -21,7 +21,7 @@ def scope_course_codes(connection):
         if connection.execute(text("PRAGMA foreign_keys")).scalar():
             raise ValueError("SQLite migration requires foreign keys disabled before the transaction; use the CLI.")
         expected = {"id", "institution_id", "name", "code", "department", "semester", "course_type", "program",
-                    "batch", "semester_number", "section", "enrollment_mode", "credits", "faculty_id", "created_at"}
+                    "batch", "recording_drive_folder_id", "semester_number", "section", "enrollment_mode", "credits", "faculty_id", "created_at"}
         if {c["name"] for c in inspector.get_columns("courses")} != expected:
             raise ValueError("Unexpected course columns. Review the migration instead of losing custom data.")
         if any(index["name"] not in {"ix_courses_id", "ix_courses_institution_id"} for index in inspector.get_indexes("courses")):
@@ -32,13 +32,14 @@ def scope_course_codes(connection):
             id INTEGER NOT NULL PRIMARY KEY, institution_id INTEGER REFERENCES institutions(id),
             name VARCHAR NOT NULL, code VARCHAR NOT NULL, department VARCHAR, semester VARCHAR,
             course_type VARCHAR NOT NULL DEFAULT 'academic', program VARCHAR, batch VARCHAR,
+            recording_drive_folder_id VARCHAR(180),
             semester_number INTEGER, section VARCHAR, enrollment_mode VARCHAR NOT NULL DEFAULT 'elective',
             credits FLOAT, faculty_id INTEGER REFERENCES users(id), created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             CONSTRAINT uq_courses_institution_code UNIQUE (institution_id, code))"""))
         connection.execute(text("""INSERT INTO courses_institution_upgrade
-            (id, institution_id, name, code, department, semester, course_type, program, batch,
+            (id, institution_id, name, code, department, semester, course_type, program, batch, recording_drive_folder_id,
              semester_number, section, enrollment_mode, credits, faculty_id, created_at)
-            SELECT id, institution_id, name, code, department, semester, course_type, program, batch,
+            SELECT id, institution_id, name, code, department, semester, course_type, program, batch, recording_drive_folder_id,
                    semester_number, section, enrollment_mode, credits, faculty_id, created_at FROM courses"""))
         connection.execute(text("DROP TABLE courses"))
         connection.execute(text("ALTER TABLE courses_institution_upgrade RENAME TO courses"))
@@ -76,6 +77,7 @@ def migrate(connection, name, domain, email=None):
                   "erp_password_initialized": "BOOLEAN NOT NULL DEFAULT FALSE",
                   "session_version": "INTEGER NOT NULL DEFAULT 0"},
         "courses": {"course_type": "VARCHAR NOT NULL DEFAULT 'academic'", "program": "VARCHAR", "batch": "VARCHAR",
+                    "recording_drive_folder_id": "VARCHAR(180)",
                     "semester_number": "INTEGER", "section": "VARCHAR",
                     "enrollment_mode": "VARCHAR NOT NULL DEFAULT 'elective'", "credits": "FLOAT"},
     }

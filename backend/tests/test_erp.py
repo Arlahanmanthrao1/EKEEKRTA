@@ -15,7 +15,8 @@ from app.core.security import create_access_token, hash_password, verify_passwor
 from app.database import Base, get_db
 from app.models import Attendance, ClassSession, Course, User, UserRole
 from app.models.erp import ERPIntegration, ERPSyncEvent
-from app.models.institution import Institution
+from app.models.institution import Institution, InstitutionType
+from app.integrations.erp_client import enqueue_event
 from app.routers.erp import router
 
 
@@ -94,6 +95,19 @@ class ERPIntegrationTest(unittest.TestCase):
         self.assertEqual(self.db.query(ERPIntegration).filter_by(institution_id=1).one().encrypted_api_token, encrypted)
         self.assertEqual(self.request("PUT", "/erp/configuration", json={**payload, "base_url": "http://erp.example.com"}).status_code, 422)
         self.assertEqual(self.request("PUT", "/erp/configuration", json={**payload, "base_url": "http://127.0.0.1:9000"}).status_code, 200)
+
+    def test_training_institution_cannot_access_or_queue_erp(self):
+        institution = self.db.get(Institution, 2)
+        institution.institution_type = InstitutionType.training_institution.value
+        self.db.add(ERPIntegration(institution_id=2, base_url="https://erp.beta.example",
+                                   encrypted_api_token="not-used", enabled=True,
+                                   sync_students=True, sync_courses=True, sync_attendance=True))
+        self.db.commit()
+        response = self.request("GET", "/erp/configuration", 3)
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertIn("only to university", response.json()["detail"])
+        self.assertIsNone(enqueue_event(self.db, 2, "course", "2", {"course": {"id": 2}}))
+        self.assertEqual(self.db.query(ERPSyncEvent).filter_by(institution_id=2).count(), 0)
 
     def test_health_check_uses_bearer_token_without_exposing_it(self):
         self.configure()

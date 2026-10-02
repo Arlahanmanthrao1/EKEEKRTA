@@ -13,6 +13,10 @@ import "../styles/dashboard.css";
 export default function AdminDashboard() {
   const { user, logout } = useAuth();
   const { page = "dashboard" } = useParams();
+  const isTraining = user.institution?.institution_type === "training_institution";
+  const supportsERP = !isTraining;
+  const facultyLabel = isTraining ? "Trainers" : "Faculty";
+  const departmentLabel = isTraining ? "Domains" : "Departments";
   const [courses, setCourses] = useState([]);
   const [users, setUsers] = useState([]);
   const [editingAccount, setEditingAccount] = useState(null);
@@ -50,7 +54,7 @@ export default function AdminDashboard() {
     event.preventDefault(); setError(""); setSuccess(""); setCreatingDepartment(true);
     try {
       const department = await apiFetch("/institutions/departments", { method: "POST", body: JSON.stringify({ name: newDepartment }) });
-      setDepartmentRecords((current) => [...current, department]); setNewDepartment(""); setSuccess("Department created. You can now assign HODs, faculty and students to it.");
+      setDepartmentRecords((current) => [...current, department]); setNewDepartment(""); setSuccess(isTraining ? "Domain created. You can now assign trainers and students to it." : "Department created. You can now assign HODs, faculty and students to it.");
     } catch (err) { setError(err.message); }
     finally { setCreatingDepartment(false); }
   };
@@ -90,25 +94,25 @@ export default function AdminDashboard() {
   if (loading) return <BrandLoading>Preparing the administration portal…</BrandLoading>;
 
   return (
-    <DashboardShell user={user} title={user.institution?.name || "Administration"} roleLabel="Administrator" onLogout={logout} searchValue={search} onSearch={setSearch} searchPlaceholder="Search users, courses, departments…">
+    <DashboardShell user={user} title={user.institution?.name || "Administration"} roleLabel="Administrator" onLogout={logout} searchValue={search} onSearch={setSearch} searchPlaceholder={`Search users, courses, ${departmentLabel.toLowerCase()}…`}>
       {page === "dashboard" && (<section className="page-hero" id="dashboard"><div><h1>Welcome, Administrator <span className="wave">👋</span></h1><p>Manage accounts and courses within your institution.</p></div><div className="hero-actions"><Link className="btn btn-primary" to="/admin/materials"><Icon name="upload" /> Upload material</Link></div></section>)}
       {error && <p className="error-banner">{error}</p>}
       {success && <p className="success-banner">{success}</p>}
-      {page === "register-student" && (<AccountRegistrationForm departments={departmentRecords} onCreated={(account) => setUsers((current) => [account, ...current])} />)}
-      {page === "register-faculty" && (<AccountRegistrationForm accountType="faculty" departments={departmentRecords} onCreated={(account) => setUsers((current) => [account, ...current])} />)}
-      {page === "register-hod" && <AccountRegistrationForm accountType="hod" departments={departmentRecords} onCreated={(account) => setUsers((current) => [account, ...current])} />}
+      {page === "register-student" && (<AccountRegistrationForm institutionType={user.institution?.institution_type} departments={departmentRecords} onCreated={(account) => setUsers((current) => [account, ...current])} />)}
+      {page === "register-faculty" && (<AccountRegistrationForm institutionType={user.institution?.institution_type} accountType="faculty" departments={departmentRecords} onCreated={(account) => setUsers((current) => [account, ...current])} />)}
+      {page === "register-hod" && !isTraining && <AccountRegistrationForm accountType="hod" departments={departmentRecords} onCreated={(account) => setUsers((current) => [account, ...current])} />}
       {page === "institution" && <InstitutionProfile />}
-      {page === "erp" && <ERPIntegration />}
-      {page === "users" && editingAccount && <AccountEditor key={editingAccount.id} account={editingAccount} departments={departmentRecords} onCancel={() => setEditingAccount(null)} onSaved={(account) => { setUsers((current) => current.map((entry) => entry.id === account.id ? account : entry)); setEditingAccount(null); setSuccess("Account updated."); }} />}
+      {page === "erp" && supportsERP && <ERPIntegration />}
+      {page === "users" && editingAccount && <AccountEditor institutionType={user.institution?.institution_type} key={editingAccount.id} account={editingAccount} departments={departmentRecords} onCancel={() => setEditingAccount(null)} onSaved={(account) => { setUsers((current) => current.map((entry) => entry.id === account.id ? account : entry)); setEditingAccount(null); setSuccess("Account updated."); }} />}
       {page === "dashboard" && <section className="stats-grid stats-six">
         <StatCard icon="users" label="Total students" value={students.length} tone="blue" />
-        <StatCard icon="users" label="Faculty" value={faculty.length} tone="green" />
-        <StatCard icon="users" label="HODs" value={hods.length} tone="amber" />
-        <StatCard icon="department" label="Departments" value={departments.length} tone="purple" />
+        <StatCard icon="users" label={facultyLabel} value={faculty.length} tone="green" />
+        {!isTraining && <StatCard icon="users" label="HODs" value={hods.length} tone="amber" />}
+        <StatCard icon="department" label={departmentLabel} value={departments.length} tone="purple" />
         <StatCard icon="courses" label="Courses" value={courses.length} tone="blue" />
         <StatCard icon="users" label="Total accounts" value={users.length} tone="green" />
       </section>}
-      {page === "dashboard" && <div className="page-actions"><Link className="btn btn-primary" to="/admin/register-student">Register student</Link><Link className="btn btn-soft" to="/admin/ai-review">Review AI actions</Link><Link className="btn btn-soft" to="/admin/erp">Import ERP users</Link><Link className="btn btn-soft" to="/admin/register-faculty">Create faculty</Link><Link className="btn btn-soft" to="/admin/register-hod">Create HOD</Link><Link className="btn btn-soft" to="/admin/departments">Manage departments</Link><Link className="btn btn-soft" to="/admin/academic-progression">Promote semester</Link><Link className="btn btn-soft" to="/admin/users">View users</Link></div>}
+      {page === "dashboard" && <div className="page-actions"><Link className="btn btn-primary" to="/admin/register-student">Register student</Link><Link className="btn btn-soft" to="/admin/ai-review">Review AI actions</Link>{supportsERP && <Link className="btn btn-soft" to="/admin/erp">Import ERP users</Link>}<Link className="btn btn-soft" to="/admin/register-faculty">Create {isTraining ? "trainer" : "faculty"}</Link>{!isTraining && <Link className="btn btn-soft" to="/admin/register-hod">Create HOD</Link>}<Link className="btn btn-soft" to="/admin/departments">Manage {departmentLabel.toLowerCase()}</Link>{!isTraining && <Link className="btn btn-soft" to="/admin/academic-progression">Promote semester</Link>}<Link className="btn btn-soft" to="/admin/users">View users</Link></div>}
 
       <div className="page-grid">
         <div className="content-stack">
@@ -120,7 +124,7 @@ export default function AdminDashboard() {
 
         <aside className="content-stack">
           {page === "dashboard" && (<section className="card panel-card system-panel"><div className="section-title-row"><h3><Icon name="chart" /> Data coverage</h3></div><div className="status-line"><span>Registered accounts</span><strong>{users.length}</strong></div><div className="status-line"><span>Courses with faculty</span><strong>{courses.filter((course) => course.faculty_id).length}</strong></div><div className="status-line"><span>Unassigned courses</span><strong>{courses.filter((course) => !course.faculty_id).length}</strong></div></section>)}
-          {page === "departments" && (<section className="card panel-card" id="departments"><div className="section-title-row"><h3>Departments</h3><Icon name="department" /></div><form onSubmit={createDepartment}><label className="field-label">New department name<input className="field" value={newDepartment} onChange={(event) => setNewDepartment(event.target.value)} minLength={2} maxLength={120} required /></label><button className="btn btn-primary" disabled={creatingDepartment}>{creatingDepartment ? "Creating…" : "Create department"}</button></form>{!departments.length && <p className="footnote">No departments are present in the returned records.</p>}{departments.filter((department) => department.toLowerCase().includes(search.toLowerCase())).map((department) => <div className="item-row" key={department}><strong>{department}</strong></div>)}</section>)}
+          {page === "departments" && (<section className="card panel-card" id="departments"><div className="section-title-row"><h3>{departmentLabel}</h3><Icon name="department" /></div><form onSubmit={createDepartment}><label className="field-label">New {isTraining ? "domain" : "department"} name<input className="field" value={newDepartment} onChange={(event) => setNewDepartment(event.target.value)} minLength={2} maxLength={120} required /></label><button className="btn btn-primary" disabled={creatingDepartment}>{creatingDepartment ? "Creating…" : `Create ${isTraining ? "domain" : "department"}`}</button></form>{!departments.length && <p className="footnote">No {departmentLabel.toLowerCase()} are present in the returned records.</p>}{departments.filter((department) => department.toLowerCase().includes(search.toLowerCase())).map((department) => <div className="item-row" key={department}><strong>{department}</strong></div>)}</section>)}
         </aside>
       </div>
 
