@@ -1,6 +1,6 @@
 # Institution onboarding and access
 
-Implemented and deployed on 4 September 2026. The existing Neon database was backed up, restore-tested, upgraded and verified before the new Vercel backend/frontend were promoted. The existing Vercel hosting arrangement is preserved; there is no hosting migration. The public login is https://smart-virtual-lms-frontend-ruby.vercel.app/login. The HITAM custom domain is still not connected.
+The current public portal is <https://ekeekrta.vercel.app/login>. Institution onboarding is implemented, but public self-service registration still requires stronger ownership verification and abuse controls before real institutional use. Custom institution domains are optional and must be verified and configured by the platform operator.
 
 ## Workflow
 
@@ -67,7 +67,7 @@ Do not deploy this backend over an unmigrated database. Startup deliberately ref
 - Public institution registration is **self-service and unverified**. No email/DNS ownership verification, approval queue, CAPTCHA or onboarding rate limit is implemented. Add those safeguards before opening registration to arbitrary institutions in production; reserving a domain here is not proof of institutional ownership.
 - One institution per email domain and globally unique account emails. Multiple institutions sharing the same domain are not supported yet.
 - Logo input accepts a hosted HTTPS image URL, not file upload. Remote images are rendered by the browser with no referrer; the backend never fetches arbitrary logo URLs.
-- Global ERP sync is disabled unless both `ERP_BASE_URL` and the intended `ERP_INSTITUTION_ID` are configured. Other institutions never send their attendance to that ERP. Per-institution ERP connectors remain future work.
+- ERP connections are configured per university institution. Training institutions do not expose ERP controls. Each connector has its own HTTPS base URL, institution ID, encrypted token, selected sync directions and delivery ledger.
 - JaaS credentials are still deployment-wide; API membership checks restrict tokens to authorized rooms. This phase does not change provider capacity, plans or hosting.
 - EKEEKRTA branding is implemented locally; see BRANDING.md. Institution names and logos remain separate.
 - Tests contain isolated fixtures only. No dummy institutions, accounts or academic activity are seeded into application databases.

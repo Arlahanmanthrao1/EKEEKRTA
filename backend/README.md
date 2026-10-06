@@ -1,7 +1,6 @@
-# AI-Powered Smart Virtual LMS — backend
+# EKEEKRTA application backend
 
-FastAPI backend scaffold for the Phase 1 feature set: authentication,
-courses, attendance, assignments, and quizzes.
+FastAPI application service for EKEEKRTA's multi-tenant university and training workflows. For a concise project overview start with the [root README](../README.md), then read the [architecture](../docs/architecture.md), [feature status](../docs/features.md), and [API guide](../docs/api-reference.md). This file retains backend-specific operational detail.
 
 ## Setup
 

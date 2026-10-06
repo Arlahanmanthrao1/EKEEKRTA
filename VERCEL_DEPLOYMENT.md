@@ -1,46 +1,127 @@
-# Vercel deployment status and setup
+# Vercel deployment
 
-Deploy `frontend` and `backend` as separate Vercel projects. Do not deploy the
-repository root. Their `.vercelignore` files exclude local environment files,
-keys, databases, environments and test artifacts. No real data is included in
-the deployment bundle. Some sensitive files were already tracked by Git before
-these exclusions; do not push that repository until its tracking/history has
-been reviewed and any exposed credentials rotated.
+EKEEKRTA uses three separate Vercel projects. The self-hosted Jitsi/Jibri stack and private recording/model workers are deliberately not deployed to Vercel.
 
-## Backend environment settings
+## Current public services
 
-- `DATABASE_URL`: Neon pooled PostgreSQL URL, preserving SSL options.
-- `SECRET_KEY`: a new random secret of at least 32 characters, not the example.
-- `ALLOWED_ORIGINS`: exact HTTPS frontend origin; comma-separated for multiple.
-- `VIDEO_PROVIDER`: `jaas`.
-- `JAAS_APP_ID`: the real JaaS application ID.
-- `JAAS_API_KEY_ID`: the full JaaS key ID.
-- `JAAS_PRIVATE_KEY`: private PEM contents, stored only as a protected backend
-  environment variable. Actual newlines or escaped `\n` are accepted. Do not
-  upload your Windows private-key file or use its Windows path online.
-- `ALLOWED_EMAIL_DOMAIN`: your college's approved email domain.
-- `ERP_BASE_URL`: leave unset/empty unless a real hosted ERP is available.
+| Service | Source | Stable URL |
+| --- | --- | --- |
+| Portal | `frontend/` | <https://ekeekrta.vercel.app> |
+| Application API | `backend/` | <https://smart-virtual-lms-backend-gules.vercel.app> |
+| ERP sandbox | `erp-dummy/` | <https://ekeekrta-erp-sandbox.vercel.app> |
 
-Set these in the intended deployment environment. Vercel configuration selects
-Singapore (`sin1`) and Python 3.12. The app refuses to start on Vercel with local
-SQLite, a default/short login secret, or non-HTTPS/wildcard allowed origins.
-API documentation is disabled on Vercel; all account creation remains admin-only.
+These are portfolio/demo deployments. Protected pages still require provisioned accounts, and the ERP dashboard requires its token.
 
-## Frontend settings
+## Deployment order
 
-Set `VITE_API_BASE_URL` to the deployed HTTPS backend URL, without a trailing
-slash. This value is public. No private database/JaaS credentials belong in the
-frontend. Build command: `npm run build`; output directory: `dist`.
+Deploy dependencies before consumers:
 
-## Data and verification
+1. ERP sandbox when its API or attendance/notification UI changes;
+2. application backend;
+3. frontend; and
+4. public verification.
 
-A new Neon database is empty. Deployment creates the schema, not accounts or
-seed data. Decide whether to migrate the existing authorized records or initialize
-a real administrator account before accepting a deployment as usable. The local
-database must be preserved. Neither migration nor initial admin creation has
-been run by the deployment preparation.
+Do not promote a frontend that expects backend routes which have not been deployed.
 
-Before sharing: verify backend health, authorized login, anonymous registration
-rejection, an administrator-created student login, course enrollment, and a real
-two-participant JaaS call from different networks. Check cloud usage allowances.
-This is a development LMS, not a completed college-production security audit.
+## Required backend settings
+
+Configure production values in the backend Vercel project, never in Git:
+
+| Variable | Requirement |
+| --- | --- |
+| `DATABASE_URL` | Hosted PostgreSQL connection string with required SSL options |
+| `SECRET_KEY` | Unique random value of at least 32 characters |
+| `ALLOWED_ORIGINS` | Exact HTTPS frontend origin(s), no wildcard |
+| `PASSWORD_RESET_BASE_URL` | `https://ekeekrta.vercel.app` when SMTP is enabled |
+| `VIDEO_PROVIDER` | Explicit provider such as `jaas`; no silent public fallback |
+| `JAAS_APP_ID`, `JAAS_API_KEY_ID`, `JAAS_PRIVATE_KEY` | Required only for JaaS; PEM stays backend-only |
+| `GOOGLE_CLIENT_ID` | Required only for Google sign-in |
+| SMTP variables | Required only for password-recovery delivery |
+| Google Drive OAuth variables | Required only for trainer-owned recording folders |
+| `CODE_RUNNER_URL` / API key | Required only for programming execution |
+
+Production startup rejects local SQLite, an example/short secret, and wildcard or non-HTTPS CORS origins. FastAPI interactive documentation is disabled in production.
+
+## Required frontend settings
+
+`VITE_API_BASE_URL` must be the stable HTTPS backend address without a trailing slash. Google Picker browser configuration may also use `VITE_GOOGLE_PICKER_API_KEY` and `VITE_GOOGLE_DRIVE_APP_ID`.
+
+Never put a database URL, private key, OAuth client secret, ERP token or mail password in a `VITE_` variable. Vite values are public browser code.
+
+## Required ERP settings
+
+| Variable | Requirement |
+| --- | --- |
+| `DATABASE_URL` | A database independent from the application database |
+| `ERP_API_TOKEN` | Random token of at least 24 characters |
+| `ERP_INSTITUTION_ID` | Must match the EKEEKRTA administrator configuration |
+| `ERP_NAME` | Display name for the sandbox/institution ERP |
+| WhatsApp variables | Optional; require Meta credentials, approved utility template and guardian consent |
+
+## CLI deployment
+
+Authenticate with the Vercel account/team that owns the existing projects:
+
+```powershell
+vercel login
+vercel whoami
+vercel teams ls
+```
+
+Deploy the backend and frontend from their project folders:
+
+```powershell
+cd backend
+vercel deploy --prod --yes
+
+cd ..\frontend
+vercel deploy --prod --yes
+```
+
+The existing ERP project is configured with `erp-dummy` as its Root Directory. Deploy it from the repository root so that setting remains valid:
+
+```powershell
+cd ..
+vercel deploy . --project ekeekrta-erp-sandbox --prod --yes
+```
+
+If Vercel reports that a configured Root Directory does not exist, the CLI was run from the wrong source level. Do not relink or create a new project until you confirm the intended project, team and environment settings.
+
+## Database changes
+
+The public backend and ERP should use separate PostgreSQL databases. Before a schema-affecting release:
+
+1. identify the exact production database/branch;
+2. stop or minimize writes;
+3. create and restore-test a backup;
+4. run the documented migration/compatibility procedure;
+5. deploy backend code;
+6. verify tenant counts, ownership and authentication; and
+7. deploy the frontend only after API verification.
+
+Reverting application code is not a database rollback.
+
+## Verification after deployment
+
+At minimum verify:
+
+- portal `/login` returns HTTP 200 and loads its current hashed JavaScript bundle;
+- backend `/` returns `{"status":"ok","service":"lms-backend"}`;
+- a protected route returns 401 without a token rather than 404;
+- ERP `/` returns HTTP 200 and the expected current screens;
+- institution admin, faculty/trainer and student/learner can sign in;
+- cross-role and cross-institution access is denied;
+- a database write persists across a new serverless instance; and
+- enabled integrations use production URLs rather than `127.0.0.1`.
+
+Provider-specific verification still requires real accounts: a two-person meeting from different networks, Google OAuth/Drive, SMTP delivery, code-runner isolation and WhatsApp template delivery.
+
+## What Vercel does not host here
+
+- self-hosted Jitsi Videobridge or Jibri;
+- long-running private recording workers;
+- private recording files;
+- locally trained speech/OCR/generative model services; or
+- the production ERP of an institution.
+
+Those workloads require institution-controlled infrastructure, retention rules, monitoring and capacity testing.
