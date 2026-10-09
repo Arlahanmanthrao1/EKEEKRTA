@@ -20,6 +20,7 @@ class Student(Base):
     batch = Column(String, nullable=True)
     semester_number = Column(Integer, nullable=True)
     section = Column(String, nullable=True)
+    parent_name = Column(String(160), nullable=True)
     parent_phone = Column(String(16), nullable=True)
     parent_whatsapp_opt_in = Column(Boolean, nullable=False, default=False, server_default="false")
     synced_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

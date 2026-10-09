@@ -58,8 +58,11 @@ layout. Select a student to see the courses matching that student's department,
 programme, batch, semester and section. Each date cell is calculated from real
 online meeting attendance synchronized by EKEEKRTA and finalized offline class
 attendance entered in the ERP (`P` for present and `A` for absent);
-multiple meetings on the same date are shown as multiple period marks. The
-register can be printed or exported as CSV. **Course Directory** remains a
+multiple meetings on the same date are shown as multiple period marks. The table
+also shows the student identity, parent/guardian name, masked phone number and a
+subject attendance percentage calculated from stored class records. A percentage
+supplied by a user or spreadsheet is never trusted. The register can be printed
+or exported as CSV. **Course Directory** remains a
 separate screen for synchronized course metadata.
 
 ## Parent WhatsApp absence alerts

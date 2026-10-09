@@ -38,6 +38,7 @@ class ERPStudentCreate(BaseModel):
     batch: str = Field(min_length=2, max_length=40)
     semester_number: int = Field(ge=1, le=8)
     section: str = Field(min_length=1, max_length=40)
+    parent_name: str | None = Field(default=None, max_length=160)
     parent_phone: str | None = Field(default=None, pattern=r"^\+[1-9][0-9]{7,14}$")
     parent_whatsapp_opt_in: bool = False
 
@@ -60,6 +61,7 @@ class ERPUserCreate(BaseModel):
     batch: str | None = Field(default=None, max_length=40)
     semester_number: int | None = Field(default=None, ge=1, le=8)
     section: str | None = Field(default=None, max_length=40)
+    parent_name: str | None = Field(default=None, max_length=160)
     parent_phone: str | None = Field(default=None, pattern=r"^\+[1-9][0-9]{7,14}$")
     parent_whatsapp_opt_in: bool = False
 

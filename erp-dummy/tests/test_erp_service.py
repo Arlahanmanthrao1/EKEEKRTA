@@ -116,6 +116,9 @@ class ERPSandboxTest(unittest.TestCase):
         self.assertIn("WHATSAPP ALERTS", page.text)
         self.assertIn("ADD USER", page.text)
         self.assertIn("USER DIRECTORY", page.text)
+        self.assertIn("Parent / Guardian Name", page.text)
+        self.assertIn("Attendance %", page.text)
+        self.assertIn("supplied percentages are never trusted", page.text)
         self.assertIn("'add-user','results'", page.text)
         self.assertIn("No sample records are generated", page.text)
         self.assertNotIn("Aisha Khan", page.text)
@@ -207,6 +210,12 @@ class ERPSandboxTest(unittest.TestCase):
         self.assertEqual(notification.attendance_source, "offline")
 
     def test_academic_register_uses_real_course_and_meeting_attendance(self):
+        student = {"role": "student", "institutional_id": "A-001", "name": "Test Student",
+                   "email": "student@alpha.edu", "department": "CS", "program": "B.Tech",
+                   "batch": "2026-2030", "semester_number": 1, "section": "A",
+                   "parent_name": "Test Parent", "parent_phone": "+919876543210",
+                   "parent_whatsapp_opt_in": False}
+        self.assertEqual(self.client.post("/api/users", headers=self.auth, json=student).status_code, 201)
         self.post("/api/ekeekrta/students/sync", self.student(), "register-student-1")
         self.post("/api/ekeekrta/courses/sync", self.course(), "register-course-1")
         self.post("/api/ekeekrta/attendance/sync", self.attendance(45), "register-attendance-1")
@@ -220,6 +229,8 @@ class ERPSandboxTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         register = response.json()
         self.assertEqual(register["student"]["name"], "Test Student")
+        self.assertEqual(register["student"]["parent_name"], "Test Parent")
+        self.assertEqual(register["student"]["parent_phone_last4"], "3210")
         self.assertEqual(register["courses"], [
             {"code": "CS101", "name": "Test Course", "course_type": "academic"}
         ])

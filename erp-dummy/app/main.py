@@ -142,7 +142,9 @@ def academic_register_directory(db: Session = Depends(get_db)):
     return {"students": [
         {"institutional_id": row.institutional_id, "name": row.name,
          "department": row.department, "program": row.program,
-         "semester_number": row.semester_number, "section": row.section}
+         "semester_number": row.semester_number, "section": row.section,
+         "parent_name": row.parent_name,
+         "parent_phone_last4": row.parent_phone[-4:] if row.parent_phone else None}
         for row in rows
     ]}
 
@@ -194,6 +196,8 @@ def academic_register(institutional_id: str, db: Session = Depends(get_db)):
             "batch": student.batch,
             "semester_number": student.semester_number,
             "section": student.section,
+            "parent_name": student.parent_name,
+            "parent_phone_last4": student.parent_phone[-4:] if student.parent_phone else None,
         },
         "courses": course_payload,
         "attendance": [
@@ -224,11 +228,13 @@ def _upsert_erp_user(payload: ERPUserCreate, db: Session):
                       email=str(payload.email).lower(), role=payload.role)
         db.add(row)
     for field in ("role", "institutional_id", "name", "department", "program", "batch",
-                  "semester_number", "section", "parent_phone", "parent_whatsapp_opt_in"):
+                  "semester_number", "section", "parent_name", "parent_phone",
+                  "parent_whatsapp_opt_in"):
         setattr(row, field, getattr(payload, field))
     if payload.role != "student":
         row.program = row.batch = row.section = None
         row.semester_number = None
+        row.parent_name = None
         row.parent_phone = None
         row.parent_whatsapp_opt_in = False
     row.email = str(payload.email).lower()
@@ -559,6 +565,7 @@ def dashboard_data(db: Session = Depends(get_db)):
             "batch": row.batch,
             "semester_number": row.semester_number,
             "section": row.section,
+            "parent_name": row.parent_name,
             "parent_phone_last4": row.parent_phone[-4:] if row.parent_phone else None,
             "parent_whatsapp_opt_in": row.parent_whatsapp_opt_in,
             "synced_at": row.synced_at,

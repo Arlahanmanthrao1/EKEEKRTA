@@ -29,6 +29,7 @@ def ensure_schema_compatibility():
         present = {column["name"] for column in inspector.get_columns("erp_students")}
         additions = {
             "role": "VARCHAR(20) NOT NULL DEFAULT 'student'",
+            "parent_name": "VARCHAR(160)",
             "parent_phone": "VARCHAR(16)",
             "parent_whatsapp_opt_in": "BOOLEAN NOT NULL DEFAULT FALSE",
         }
