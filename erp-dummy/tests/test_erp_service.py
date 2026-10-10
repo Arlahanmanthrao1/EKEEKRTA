@@ -23,8 +23,13 @@ class ERPSandboxTest(unittest.TestCase):
         self.db = sessionmaker(bind=self.engine)()
         app.dependency_overrides[get_db] = lambda: self.db
         self.old_token, self.old_institution = settings.erp_api_token, settings.erp_institution_id
+        self.old_n8n = (settings.n8n_absence_notifications_enabled,
+                         settings.n8n_api_token, settings.n8n_max_attempts)
         settings.erp_api_token = SecretStr("isolated-sandbox-token-123456")
         settings.erp_institution_id = "ALPHA"
+        settings.n8n_absence_notifications_enabled = False
+        settings.n8n_api_token = SecretStr("")
+        settings.n8n_max_attempts = 3
         self.client = TestClient(app)
 
     def tearDown(self):
@@ -33,10 +38,16 @@ class ERPSandboxTest(unittest.TestCase):
         self.engine.dispose()
         app.dependency_overrides.clear()
         settings.erp_api_token, settings.erp_institution_id = self.old_token, self.old_institution
+        (settings.n8n_absence_notifications_enabled,
+         settings.n8n_api_token, settings.n8n_max_attempts) = self.old_n8n
 
     @property
     def auth(self):
         return {"Authorization": "Bearer isolated-sandbox-token-123456"}
+
+    @property
+    def n8n_auth(self):
+        return {"Authorization": "Bearer isolated-n8n-token-123456789"}
 
     def post(self, path, payload, key, headers=None):
         return self.client.post(path, json=payload, headers={**self.auth, "Idempotency-Key": key, **(headers or {})})
@@ -166,6 +177,57 @@ class ERPSandboxTest(unittest.TestCase):
         self.assertEqual(response.json()["whatsapp_notification"]["status"], "not_final")
         post.assert_not_called()
         self.assertEqual(self.db.query(WhatsAppNotification).count(), 0)
+
+    def test_n8n_outbox_uses_separate_auth_claim_and_idempotent_ack(self):
+        settings.n8n_absence_notifications_enabled = True
+        settings.n8n_api_token = SecretStr("isolated-n8n-token-123456789")
+        student = {"role": "student", "institutional_id": "A-001", "name": "Test Student",
+                   "email": "student@alpha.edu", "department": "CS", "program": "B.Tech",
+                   "batch": "2026-2030", "semester_number": 1, "section": "A",
+                   "parent_name": "Test Parent", "parent_phone": "+919876543210",
+                   "parent_whatsapp_opt_in": True}
+        self.assertEqual(self.client.post("/api/users", headers=self.auth, json=student).status_code, 201)
+        absent = self.attendance(5)
+        absent["class_session"]["ended_at"] = "2026-09-05T10:00:00Z"
+        absent["attendance"]["present"] = False
+        with patch("app.integrations.whatsapp.httpx.post") as post:
+            synced = self.post("/api/ekeekrta/attendance/sync", absent, "n8n-absence-1")
+        self.assertEqual(synced.status_code, 200, synced.text)
+        self.assertEqual(synced.json()["whatsapp_notification"]["status"], "pending")
+        post.assert_not_called()
+
+        self.assertEqual(self.client.get("/api/n8n/absence-events").status_code, 401)
+        self.assertEqual(self.client.get("/api/n8n/absence-events", headers=self.auth).status_code, 401)
+        pending = self.client.get("/api/n8n/absence-events", headers=self.n8n_auth)
+        self.assertEqual(pending.status_code, 200, pending.text)
+        event = pending.json()["events"][0]
+        self.assertEqual(event["student_institutional_id"], "A-001")
+        self.assertEqual(event["parent_phone"], "+919876543210")
+        self.assertFalse(event["present"])
+        self.assertEqual(event["idempotency_key"], f"absence:{event['event_id']}")
+
+        claim = self.client.post(f"/api/n8n/absence-events/{event['event_id']}/claim",
+                                 headers=self.n8n_auth)
+        self.assertEqual(claim.status_code, 200, claim.text)
+        self.assertEqual(claim.json()["status"], "processing")
+        self.assertEqual(claim.json()["attempts"], 1)
+        self.assertEqual(self.client.post(
+            f"/api/n8n/absence-events/{event['event_id']}/claim",
+            headers=self.n8n_auth).status_code, 409)
+        ack = self.client.post(
+            f"/api/n8n/absence-events/{event['event_id']}/ack", headers=self.n8n_auth,
+            json={"status": "sent", "provider_message_id": "wamid.n8n-test"})
+        self.assertEqual(ack.status_code, 200, ack.text)
+        self.assertEqual(ack.json()["status"], "sent")
+        replay = self.client.post(
+            f"/api/n8n/absence-events/{event['event_id']}/ack", headers=self.n8n_auth,
+            json={"status": "sent", "provider_message_id": "wamid.n8n-test"})
+        self.assertEqual(replay.json()["status"], "already_sent")
+        self.assertEqual(self.client.get(
+            "/api/n8n/absence-events", headers=self.n8n_auth).json()["events"], [])
+        dashboard = self.client.get("/api/dashboard", headers=self.auth)
+        self.assertNotIn("+919876543210", dashboard.text)
+        self.assertEqual(dashboard.json()["whatsapp"]["delivery_mode"], "n8n")
 
     def test_offline_class_absence_is_finalized_and_alerts_parent_once(self):
         student = {"role": "student", "institutional_id": "A-001", "name": "Test Student",

@@ -221,3 +221,18 @@ class DemoAttendanceMatrixRow(BaseModel):
 class DemoAttendanceMatrixImport(BaseModel):
     model_config = ConfigDict(extra="forbid")
     rows: list[DemoAttendanceMatrixRow] = Field(min_length=1, max_length=100)
+
+
+class N8NAbsenceAcknowledgement(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    status: Literal["sent", "failed"]
+    provider_message_id: str | None = Field(default=None, max_length=240)
+    error: str | None = Field(default=None, max_length=500)
+
+    @model_validator(mode="after")
+    def validate_result(self):
+        if self.status == "sent" and not self.provider_message_id:
+            raise ValueError("A WhatsApp provider message ID is required for a successful acknowledgement")
+        if self.status == "failed" and not self.error:
+            raise ValueError("A safe error description is required for a failed acknowledgement")
+        return self

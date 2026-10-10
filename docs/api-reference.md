@@ -87,6 +87,14 @@ The execution step repeats authorization and state checks. A preview is not proo
 
 The ERP sandbox exposes a separate token-protected namespace under `/api/ekeekrta` for health, user directory, academic results, course sync and attendance sync. It also exposes protected operator endpoints for user entry, offline attendance, academic register and WhatsApp-delivery review.
 
+When the n8n absence outbox is enabled, a second token protects
+`GET /api/n8n/absence-events`, `POST /api/n8n/absence-events/{id}/claim`, and
+`POST /api/n8n/absence-events/{id}/ack`. n8n must claim an event before sending
+and acknowledge the result afterward. The claim/ack lifecycle provides retry
+limits and duplicate-message protection. Full parent phone numbers are returned
+only through this n8n-specific authentication boundary; ordinary ERP responses
+remain masked.
+
 Do not reuse the EKEEKRTA user JWT as an ERP token. See [ERP integration](erp-integration.md) for payload and idempotency rules.
 
 ## API evolution

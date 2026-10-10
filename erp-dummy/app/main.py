@@ -4,7 +4,7 @@ import secrets
 from datetime import datetime, time, timedelta, timezone
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.responses import HTMLResponse
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
@@ -18,7 +18,7 @@ from app.integrations.whatsapp import (configuration_status, notification_payloa
                                        send_absence_notification)
 from app.schemas import (AttendanceSyncIn, CourseSyncIn, DemoAttendanceMatrixImport,
                          ERPResultUpsert, ERPStudentCreate, ERPUserCreate, InstitutionRef,
-                         OfflineAttendanceCreate, StudentSyncIn)
+                         N8NAbsenceAcknowledgement, OfflineAttendanceCreate, StudentSyncIn)
 
 on_vercel = bool(os.getenv("VERCEL"))
 configured_token = settings.erp_api_token.get_secret_value()
@@ -26,6 +26,9 @@ if on_vercel and (len(configured_token) < 24 or configured_token.startswith("rep
     raise RuntimeError("Set ERP_API_TOKEN to a random value of at least 24 characters")
 if on_vercel and not settings.erp_institution_id.strip():
     raise RuntimeError("Set ERP_INSTITUTION_ID before deploying the ERP sandbox")
+if (on_vercel and settings.n8n_absence_notifications_enabled and
+        len(settings.n8n_api_token.get_secret_value().strip()) < 24):
+    raise RuntimeError("Set N8N_API_TOKEN to a separate random value of at least 24 characters")
 
 Base.metadata.create_all(bind=engine)
 ensure_schema_compatibility()
@@ -42,6 +45,17 @@ def require_token(authorization: Annotated[str | None, Header()] = None) -> None
         raise HTTPException(503, "ERP_API_TOKEN is not configured")
     if not secrets.compare_digest(supplied, expected):
         raise HTTPException(401, "Invalid ERP API token", headers={"WWW-Authenticate": "Bearer"})
+
+
+def require_n8n_token(authorization: Annotated[str | None, Header()] = None) -> None:
+    if not settings.n8n_absence_notifications_enabled:
+        raise HTTPException(503, "The n8n absence outbox is disabled")
+    expected = settings.n8n_api_token.get_secret_value().strip()
+    supplied = authorization[7:] if authorization and authorization.startswith("Bearer ") else ""
+    if len(expected) < 24:
+        raise HTTPException(503, "N8N_API_TOKEN is not configured")
+    if not secrets.compare_digest(supplied, expected):
+        raise HTTPException(401, "Invalid n8n API token", headers={"WWW-Authenticate": "Bearer"})
 
 
 def require_institution(institution: InstitutionRef) -> str:
@@ -678,6 +692,132 @@ def sync_attendance(payload: AttendanceSyncIn, idempotency_key: str = Depends(re
                     {"status": "student_not_registered"})
     return {"status": "synced", "attendance_id": row.ekeekrta_id, "present": row.present,
             "whatsapp_notification": notification}
+
+
+def _n8n_absence_event(db: Session, notification: WhatsAppNotification) -> dict | None:
+    attendance = db.query(AttendanceRecord).filter(
+        AttendanceRecord.id == notification.attendance_record_id,
+        AttendanceRecord.institution_external_id == notification.institution_external_id,
+        AttendanceRecord.present.is_(False),
+        AttendanceRecord.session_ended_at.is_not(None),
+    ).first()
+    if not attendance:
+        return None
+    student = db.query(Student).filter(
+        Student.institution_external_id == notification.institution_external_id,
+        Student.institutional_id == notification.student_institutional_id,
+        Student.role == "student",
+        Student.is_demo.is_(False),
+    ).first()
+    if not student or not student.parent_phone or not student.parent_whatsapp_opt_in:
+        return None
+    return {
+        "event_id": notification.id,
+        "idempotency_key": f"absence:{notification.id}",
+        "attendance_record_id": attendance.id,
+        "student_id": student.institutional_id,
+        "student_institutional_id": student.institutional_id,
+        "student_name": student.name,
+        "parent_name": student.parent_name,
+        "parent_phone": student.parent_phone,
+        "whatsapp_opt_in": student.parent_whatsapp_opt_in,
+        "course_code": attendance.course_code,
+        "course_name": attendance.course_name,
+        "class_session_id": attendance.class_session_id,
+        "class_time": attendance.session_started_at,
+        "class_ended_at": attendance.session_ended_at,
+        "attendance_source": attendance.source,
+        "duration_minutes": attendance.duration_minutes,
+        "present": attendance.present,
+        "institution_name": settings.erp_name,
+        "status": notification.status,
+        "attempts": notification.attempts,
+        "created_at": notification.created_at,
+    }
+
+
+def _n8n_notification(db: Session, event_id: int) -> WhatsAppNotification:
+    institution_id = settings.erp_institution_id.strip() or None
+    row = db.query(WhatsAppNotification).filter(
+        WhatsAppNotification.id == event_id,
+        WhatsAppNotification.institution_external_id == institution_id,
+        WhatsAppNotification.notification_type == "class_absence",
+    ).with_for_update().first()
+    if not row:
+        raise HTTPException(404, "Absence event not found")
+    return row
+
+
+@app.get("/api/n8n/absence-events", dependencies=[Depends(require_n8n_token)])
+def n8n_absence_events(
+    status: str = Query(default="retryable"),
+    limit: int = Query(default=50, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    allowed = {"pending", "processing", "sent", "failed", "retry_limit_reached", "retryable"}
+    if status not in allowed:
+        raise HTTPException(422, "Unsupported absence-event status")
+    institution_id = settings.erp_institution_id.strip() or None
+    statuses = ["pending", "failed"] if status == "retryable" else [status]
+    rows = db.query(WhatsAppNotification).filter(
+        WhatsAppNotification.institution_external_id == institution_id,
+        WhatsAppNotification.notification_type == "class_absence",
+        WhatsAppNotification.status.in_(statuses),
+    ).order_by(WhatsAppNotification.created_at.asc()).limit(limit).all()
+    events = []
+    for row in rows:
+        event = _n8n_absence_event(db, row)
+        if event:
+            events.append(event)
+    return {"events": events, "count": len(events), "status_filter": status}
+
+
+@app.post("/api/n8n/absence-events/{event_id}/claim", dependencies=[Depends(require_n8n_token)])
+def claim_n8n_absence_event(event_id: int, db: Session = Depends(get_db)):
+    row = _n8n_notification(db, event_id)
+    if row.status == "sent":
+        return {"status": "already_sent", "event_id": row.id}
+    if row.status == "processing":
+        raise HTTPException(409, "This absence event is already being processed")
+    if row.status not in {"pending", "failed"}:
+        raise HTTPException(409, f"Absence event cannot be claimed from status {row.status}")
+    if row.attempts >= settings.n8n_max_attempts:
+        row.status = "retry_limit_reached"
+        row.last_error = "n8n delivery retry limit reached"
+        db.commit()
+        raise HTTPException(409, "Absence event retry limit reached")
+    row.status = "processing"
+    row.attempts += 1
+    row.last_error = None
+    db.commit()
+    db.refresh(row)
+    event = _n8n_absence_event(db, row)
+    if not event:
+        raise HTTPException(409, "Absence event no longer has an eligible student or attendance record")
+    return event
+
+
+@app.post("/api/n8n/absence-events/{event_id}/ack", dependencies=[Depends(require_n8n_token)])
+def acknowledge_n8n_absence_event(event_id: int, payload: N8NAbsenceAcknowledgement,
+                                  db: Session = Depends(get_db)):
+    row = _n8n_notification(db, event_id)
+    if row.status == "sent":
+        return {"status": "already_sent", "event_id": row.id,
+                "provider_message_id": row.provider_message_id}
+    if row.status != "processing":
+        raise HTTPException(409, "Claim the absence event before acknowledging it")
+    if payload.status == "sent":
+        row.status = "sent"
+        row.provider_message_id = payload.provider_message_id
+        row.sent_at = datetime.now(timezone.utc)
+        row.last_error = None
+    else:
+        row.status = ("retry_limit_reached" if row.attempts >= settings.n8n_max_attempts
+                      else "failed")
+        row.last_error = payload.error
+    db.commit()
+    db.refresh(row)
+    return notification_payload(row)
 
 
 @app.get("/api/whatsapp-notifications", dependencies=[Depends(require_token)])

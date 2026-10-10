@@ -130,6 +130,58 @@ encrypted environment settings. The **WhatsApp Alerts** ERP page shows masked
 phone numbers, delivery status and safe retry controls; it never returns the
 access token to the browser.
 
+### n8n absence-delivery outbox
+
+n8n is the recommended delivery mode when an external workflow sends the
+approved WhatsApp template. Configure a separate secret and keep direct ERP
+delivery disabled:
+
+```dotenv
+WHATSAPP_NOTIFICATIONS_ENABLED=false
+N8N_ABSENCE_NOTIFICATIONS_ENABLED=true
+N8N_API_TOKEN=generate-a-separate-random-secret-at-least-24-characters
+N8N_MAX_ATTEMPTS=3
+```
+
+The n8n token must not equal `ERP_API_TOKEN`. Store it in n8n Credentials and
+send it only as `Authorization: Bearer <token>` to these endpoints:
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/n8n/absence-events?status=retryable&limit=50` | Read pending and retryable finalized absences |
+| `POST` | `/api/n8n/absence-events/{event_id}/claim` | Atomically claim one event before sending |
+| `POST` | `/api/n8n/absence-events/{event_id}/ack` | Record a successful or failed WhatsApp attempt |
+
+The GET response includes `student_institutional_id`, `student_id`, full parent
+phone, consent, class details, status, attempts and a stable
+`idempotency_key`. Full phone numbers are available only through this separate
+n8n authentication boundary; the ERP dashboard and ordinary notification API
+remain masked.
+
+Recommended workflow:
+
+1. **Schedule Trigger** every five minutes.
+2. **HTTP Request** GET the retryable outbox.
+3. Split `events` into individual items.
+4. Optionally read the Google Sheet and **Merge**
+   `student_institutional_id` with `student_id`.
+5. **HTTP Request** POST `/claim` for the event. Continue only on success.
+6. Check `present = false`, `whatsapp_opt_in = true`, and a valid international phone.
+7. Send the approved WhatsApp template.
+8. **HTTP Request** POST `/ack` with one of:
+
+   ```json
+   {"status":"sent","provider_message_id":"wamid.returned-by-meta"}
+   ```
+
+   ```json
+   {"status":"failed","error":"Safe failure description"}
+   ```
+
+Claiming increments the attempt counter. A sent acknowledgement is idempotent,
+processing events cannot be claimed twice, and failed events stop appearing
+after `N8N_MAX_ATTEMPTS`. Demo-imported attendance never enters this outbox.
+
 ### Offline classroom attendance
 
 Faculty-entered physical classes use the same alert policy as online meetings:

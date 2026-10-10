@@ -22,11 +22,22 @@ def configuration_status() -> dict:
         and template
         and language
     )
+    n8n_token = settings.n8n_api_token.get_secret_value().strip()
+    n8n_configured = len(n8n_token) >= 24
+    if settings.n8n_absence_notifications_enabled:
+        delivery_mode = "n8n" if n8n_configured else "n8n_setup_required"
+    elif settings.whatsapp_notifications_enabled:
+        delivery_mode = "direct_meta" if configured else "direct_meta_setup_required"
+    else:
+        delivery_mode = "disabled"
     return {
         "enabled": settings.whatsapp_notifications_enabled,
         "configured": configured,
         "template_name": template or None,
         "language": language or None,
+        "n8n_enabled": settings.n8n_absence_notifications_enabled,
+        "n8n_configured": n8n_configured,
+        "delivery_mode": delivery_mode,
     }
 
 
@@ -112,6 +123,16 @@ def send_absence_notification(db: Session, attendance: AttendanceRecord,
         return notification_payload(row)
 
     config = configuration_status()
+    if config["n8n_enabled"]:
+        if not config["n8n_configured"]:
+            row.status = "n8n_configuration_required"
+            row.last_error = "Configure a separate n8n API token with at least 24 characters"
+        elif row.status not in {"sent", "processing"}:
+            row.status = "pending"
+            row.last_error = None
+        db.commit()
+        db.refresh(row)
+        return notification_payload(row)
     if not config["enabled"]:
         row.status = "disabled"
         row.last_error = "WhatsApp absence notifications are disabled"

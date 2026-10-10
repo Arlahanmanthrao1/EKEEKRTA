@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     whatsapp_template_language: str = "en_US"
     whatsapp_request_timeout_seconds: float = Field(default=10, ge=2, le=30)
     whatsapp_max_attempts: int = Field(default=3, ge=1, le=10)
+    n8n_absence_notifications_enabled: bool = False
+    n8n_api_token: SecretStr = SecretStr("")
+    n8n_max_attempts: int = Field(default=3, ge=1, le=10)
 
     class Config:
         env_file = ".env"
