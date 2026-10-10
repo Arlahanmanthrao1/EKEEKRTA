@@ -102,6 +102,8 @@ class ERPSandboxTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["counts"], {"users": 1, "students": 1, "faculty": 0,
                                                      "hod": 0, "courses": 0, "attendance": 0,
+                                                     "demo_students": 0, "demo_courses": 0,
+                                                     "demo_attendance": 0,
                                                      "results": 0, "offline_classes": 0,
                                                      "whatsapp_alerts": 0})
         self.assertNotIn("isolated-sandbox-token", response.text)
@@ -120,7 +122,8 @@ class ERPSandboxTest(unittest.TestCase):
         self.assertIn("Attendance %", page.text)
         self.assertIn("supplied percentages are never trusted", page.text)
         self.assertIn("'add-user','results'", page.text)
-        self.assertIn("No sample records are generated", page.text)
+        self.assertIn("DEMO ATTENDANCE IMPORT", page.text)
+        self.assertIn("never send WhatsApp messages", page.text)
         self.assertNotIn("Aisha Khan", page.text)
 
     def test_final_absence_sends_one_opted_in_parent_template_message(self):
@@ -232,13 +235,61 @@ class ERPSandboxTest(unittest.TestCase):
         self.assertEqual(register["student"]["parent_name"], "Test Parent")
         self.assertEqual(register["student"]["parent_phone_last4"], "3210")
         self.assertEqual(register["courses"], [
-            {"code": "CS101", "name": "Test Course", "course_type": "academic"}
+            {"code": "CS101", "name": "Test Course", "course_type": "academic", "is_demo": False}
         ])
         self.assertEqual(len(register["attendance"]), 1)
         self.assertTrue(register["attendance"][0]["present"])
         self.assertEqual(register["attendance"][0]["session_started_at"], "2026-09-05T09:00:00")
         self.assertEqual(
             self.client.get("/api/academic-register/UNKNOWN", headers=self.auth).status_code, 404)
+
+    def test_demo_attendance_matrix_is_isolated_recalculated_and_removable(self):
+        payload = {"rows": [{
+            "student_id": "DEMO-001",
+            "student_name": "Demo Student",
+            "parent_name": "Demo Parent",
+            "parent_phone": "+919000000001",
+            "subject": "NLP",
+            "attendance": [
+                {"date": "2026-09-28", "status": "P"},
+                {"date": "2026-09-29", "status": "P"},
+                {"date": "2026-09-30", "status": "P"},
+                {"date": "2026-10-01", "status": "P"},
+                {"date": "2026-10-07", "status": "P"},
+                {"date": "2026-10-09", "status": "A"},
+            ],
+            "attendance_percentage": 74,
+        }]}
+        response = self.client.post("/api/demo-attendance/import", headers=self.auth, json=payload)
+        self.assertEqual(response.status_code, 201, response.text)
+        result = response.json()
+        self.assertTrue(result["demo"])
+        self.assertEqual(result["whatsapp_notifications_created"], 0)
+        self.assertEqual(result["rows"][0]["calculated_attendance_percentage"], 83.33)
+        self.assertEqual(result["rows"][0]["supplied_attendance_percentage"], 74)
+        self.assertTrue(self.db.query(Student).one().is_demo)
+        self.assertTrue(self.db.query(Course).one().is_demo)
+        self.assertEqual(self.db.query(AttendanceRecord).filter(
+            AttendanceRecord.source == "demo").count(), 6)
+        self.assertEqual(self.db.query(WhatsAppNotification).count(), 0)
+
+        # Demonstration identities never become EKEEKRTA import candidates.
+        self.assertEqual(self.client.get("/api/ekeekrta/students", headers=self.auth).json()["students"], [])
+        self.assertEqual(self.client.get("/api/ekeekrta/users", headers=self.auth).json()["users"], [])
+        register = self.client.get("/api/academic-register/DEMO-001", headers=self.auth).json()
+        self.assertTrue(register["student"]["is_demo"])
+        self.assertEqual(len(register["attendance"]), 6)
+        counts = self.client.get("/api/dashboard", headers=self.auth).json()["counts"]
+        self.assertEqual((counts["users"], counts["demo_students"], counts["demo_attendance"]),
+                         (0, 1, 6))
+
+        removed = self.client.delete("/api/demo-attendance", headers=self.auth)
+        self.assertEqual(removed.status_code, 200, removed.text)
+        self.assertEqual(removed.json(), {"status": "removed", "attendance": 6,
+                                          "courses": 1, "students": 1})
+        self.assertEqual(self.db.query(Student).count(), 0)
+        self.assertEqual(self.db.query(Course).count(), 0)
+        self.assertEqual(self.db.query(AttendanceRecord).count(), 0)
 
     def test_erp_student_entry_is_exported_to_ekeekrta(self):
         payload = {"institutional_id": "A-009", "name": "ERP Student", "email": "erp.student@alpha.edu",

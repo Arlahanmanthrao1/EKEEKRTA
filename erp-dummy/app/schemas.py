@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
 
@@ -192,3 +192,32 @@ class OfflineAttendanceCreate(BaseModel):
         if len(ids) != len(set(ids)):
             raise ValueError("Each student can appear only once in an offline attendance submission")
         return self
+
+
+class DemoAttendanceMark(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    date: date
+    status: Literal["P", "A"]
+
+
+class DemoAttendanceMatrixRow(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    student_id: str = Field(min_length=2, max_length=120)
+    student_name: str = Field(min_length=2, max_length=160)
+    parent_name: str | None = Field(default=None, max_length=160)
+    parent_phone: str | None = Field(default=None, pattern=r"^\+[1-9][0-9]{7,14}$")
+    subject: str = Field(min_length=1, max_length=120)
+    attendance: list[DemoAttendanceMark] = Field(min_length=1, max_length=60)
+    attendance_percentage: float | None = Field(default=None, ge=0, le=100)
+
+    @model_validator(mode="after")
+    def unique_dates(self):
+        dates = [mark.date for mark in self.attendance]
+        if len(dates) != len(set(dates)):
+            raise ValueError("Each demo subject date can appear only once")
+        return self
+
+
+class DemoAttendanceMatrixImport(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    rows: list[DemoAttendanceMatrixRow] = Field(min_length=1, max_length=100)

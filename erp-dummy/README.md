@@ -2,9 +2,9 @@
 
 A separate, authenticated ERP service for demonstrating EKEEKRTA integration
 when a college does not provide access to its real ERP. It has its own database
-and can be deployed independently. It does not create seeded or fabricated
-records: users, courses and attendance appear only after an administrator enters
-or synchronizes real records. Student, faculty, and HOD master records are
+and can be deployed independently. It does not seed records automatically:
+official users, courses and attendance appear only after an administrator enters
+or synchronizes them. Student, faculty, and HOD master records are
 entered in this ERP and reviewed before import into EKEEKRTA; course and meeting
 attendance records flow back to the ERP.
 
@@ -64,6 +64,23 @@ subject attendance percentage calculated from stored class records. A percentage
 supplied by a user or spreadsheet is never trusted. The register can be printed
 or exported as CSV. **Course Directory** remains a
 separate screen for synchronized course metadata.
+
+### Labelled demo attendance matrix
+
+For presentations, open **Demo Attendance Import** and paste CSV or tab-separated
+data with this shape:
+
+```csv
+student_id,student_name,parent_name,parent_phone,subject,28/09,29/09,30/09,01/10,07/10,09/10,attendance_percentage
+DEMO-001,Demo Student,Demo Parent,+919000000001,NLP,P,P,P,P,P,A,74
+```
+
+Choose the year used by `DD/MM` headers, then import. The ERP calculates the
+percentage from the P/A cells (the example above becomes 83.33%, so the supplied
+74 is displayed as ignored). Imported rows are visibly marked **DEMO**, do not
+appear in the EKEEKRTA user-import APIs, cannot be used in official offline
+attendance, and never create WhatsApp alerts. **Remove all demo data** deletes
+only records created by this importer.
 
 ## Parent WhatsApp absence alerts
 

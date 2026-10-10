@@ -23,6 +23,7 @@ class Student(Base):
     parent_name = Column(String(160), nullable=True)
     parent_phone = Column(String(16), nullable=True)
     parent_whatsapp_opt_in = Column(Boolean, nullable=False, default=False, server_default="false")
+    is_demo = Column(Boolean, nullable=False, default=False, server_default="false")
     synced_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
@@ -45,6 +46,7 @@ class Course(Base):
     credits = Column(Float, nullable=True)
     faculty_institutional_id = Column(String(120), nullable=True)
     faculty_name = Column(String(160), nullable=True)
+    is_demo = Column(Boolean, nullable=False, default=False, server_default="false")
     synced_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 

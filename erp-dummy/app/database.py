@@ -32,6 +32,7 @@ def ensure_schema_compatibility():
             "parent_name": "VARCHAR(160)",
             "parent_phone": "VARCHAR(16)",
             "parent_whatsapp_opt_in": "BOOLEAN NOT NULL DEFAULT FALSE",
+            "is_demo": "BOOLEAN NOT NULL DEFAULT FALSE",
         }
         with engine.begin() as connection:
             qualifier = " IF NOT EXISTS" if engine.dialect.name == "postgresql" else ""
@@ -40,10 +41,16 @@ def ensure_schema_compatibility():
                     connection.execute(text(
                         f"ALTER TABLE erp_students ADD COLUMN{qualifier} {name} {definition}"
                     ))
-    if "erp_courses" in tables and "credits" not in {column["name"] for column in inspector.get_columns("erp_courses")}:
+    if "erp_courses" in tables:
+        present = {column["name"] for column in inspector.get_columns("erp_courses")}
+        additions = {"credits": "FLOAT", "is_demo": "BOOLEAN NOT NULL DEFAULT FALSE"}
         with engine.begin() as connection:
             qualifier = " IF NOT EXISTS" if engine.dialect.name == "postgresql" else ""
-            connection.execute(text(f"ALTER TABLE erp_courses ADD COLUMN{qualifier} credits FLOAT"))
+            for name, definition in additions.items():
+                if name not in present:
+                    connection.execute(text(
+                        f"ALTER TABLE erp_courses ADD COLUMN{qualifier} {name} {definition}"
+                    ))
     if "erp_attendance_records" in tables:
         present = {column["name"] for column in inspector.get_columns("erp_attendance_records")}
         if "source" not in present:

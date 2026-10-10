@@ -1,10 +1,12 @@
 import os
+import re
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import HTMLResponse
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -14,9 +16,9 @@ from app.models import (AcademicResult, AttendanceRecord, Course, OfflineClassSe
                         Student, SyncReceipt, WhatsAppNotification)
 from app.integrations.whatsapp import (configuration_status, notification_payload,
                                        send_absence_notification)
-from app.schemas import (AttendanceSyncIn, CourseSyncIn, ERPResultUpsert, ERPStudentCreate,
-                         ERPUserCreate, InstitutionRef, OfflineAttendanceCreate,
-                         StudentSyncIn)
+from app.schemas import (AttendanceSyncIn, CourseSyncIn, DemoAttendanceMatrixImport,
+                         ERPResultUpsert, ERPStudentCreate, ERPUserCreate, InstitutionRef,
+                         OfflineAttendanceCreate, StudentSyncIn)
 
 on_vercel = bool(os.getenv("VERCEL"))
 configured_token = settings.erp_api_token.get_secret_value()
@@ -87,7 +89,10 @@ def health():
 @app.get("/api/ekeekrta/students", dependencies=[Depends(require_token)])
 def export_students(db: Session = Depends(get_db)):
     """Expose ERP-owned student master records for an authenticated EKEEKRTA import."""
-    rows = db.query(Student).filter(Student.role == "student").order_by(Student.institutional_id.asc()).all()
+    rows = db.query(Student).filter(
+        Student.role == "student",
+        Student.is_demo.is_(False),
+    ).order_by(Student.institutional_id.asc()).all()
     return {
         "institution_id": settings.erp_institution_id or None,
         "students": [
@@ -101,7 +106,9 @@ def export_students(db: Session = Depends(get_db)):
 
 @app.get("/api/ekeekrta/users", dependencies=[Depends(require_token)])
 def export_users(db: Session = Depends(get_db)):
-    rows = db.query(Student).order_by(Student.role, Student.institutional_id.asc()).all()
+    rows = db.query(Student).filter(Student.is_demo.is_(False)).order_by(
+        Student.role, Student.institutional_id.asc()
+    ).all()
     return {
         "institution_id": settings.erp_institution_id or None,
         "users": [
@@ -144,7 +151,8 @@ def academic_register_directory(db: Session = Depends(get_db)):
          "department": row.department, "program": row.program,
          "semester_number": row.semester_number, "section": row.section,
          "parent_name": row.parent_name,
-         "parent_phone_last4": row.parent_phone[-4:] if row.parent_phone else None}
+         "parent_phone_last4": row.parent_phone[-4:] if row.parent_phone else None,
+         "is_demo": row.is_demo}
         for row in rows
     ]}
 
@@ -175,7 +183,8 @@ def academic_register(institutional_id: str, db: Session = Depends(get_db)):
 
     known_codes = {course.code for course in courses}
     course_payload = [
-        {"code": course.code, "name": course.name, "course_type": course.course_type}
+        {"code": course.code, "name": course.name, "course_type": course.course_type,
+         "is_demo": course.is_demo}
         for course in courses
     ]
     # A synchronized attendance record remains valid evidence even when its
@@ -183,7 +192,7 @@ def academic_register(institutional_id: str, db: Session = Depends(get_db)):
     for record in attendance:
         if record.course_code not in known_codes:
             course_payload.append({"code": record.course_code, "name": record.course_name,
-                                   "course_type": None})
+                                   "course_type": None, "is_demo": record.source == "demo"})
             known_codes.add(record.course_code)
     course_payload.sort(key=lambda item: item["code"].casefold())
 
@@ -198,6 +207,7 @@ def academic_register(institutional_id: str, db: Session = Depends(get_db)):
             "section": student.section,
             "parent_name": student.parent_name,
             "parent_phone_last4": student.parent_phone[-4:] if student.parent_phone else None,
+            "is_demo": student.is_demo,
         },
         "courses": course_payload,
         "attendance": [
@@ -212,12 +222,157 @@ def academic_register(institutional_id: str, db: Session = Depends(get_db)):
     }
 
 
+def _demo_course_code(subject: str) -> str:
+    code = re.sub(r"\s+", "-", subject.strip().upper())
+    return code[:120]
+
+
+@app.post("/api/demo-attendance/import", dependencies=[Depends(require_token)], status_code=201)
+def import_demo_attendance(payload: DemoAttendanceMatrixImport, db: Session = Depends(get_db)):
+    """Import an explicitly labelled, removable attendance matrix for demonstrations."""
+    institution_id = settings.erp_institution_id.strip() or None
+    minimum_id = db.query(func.min(AttendanceRecord.ekeekrta_id)).scalar() or 0
+    next_attendance_id = min(-1, minimum_id - 1)
+    imported_rows = []
+
+    for item in payload.rows:
+        student = db.query(Student).filter(
+            Student.institution_external_id == institution_id,
+            Student.institutional_id == item.student_id,
+        ).first()
+        if student and not student.is_demo:
+            raise HTTPException(409, f"{item.student_id} is an official ERP user and cannot be overwritten by demo data")
+        if student is None:
+            safe_id = re.sub(r"[^a-z0-9]+", ".", item.student_id.casefold()).strip(".") or "student"
+            student = Student(
+                institution_external_id=institution_id,
+                ekeekrta_id=0,
+                institutional_id=item.student_id,
+                role="student",
+                name=item.student_name,
+                email=f"demo.{safe_id}@example.invalid",
+                department="DEMO",
+                program="Demo Programme",
+                batch="Demo Batch",
+                semester_number=1,
+                section="DEMO",
+                is_demo=True,
+            )
+            db.add(student)
+        student.name = item.student_name
+        student.parent_name = item.parent_name
+        student.parent_phone = item.parent_phone
+        student.parent_whatsapp_opt_in = False
+        student.is_demo = True
+
+        course_code = _demo_course_code(item.subject)
+        course = db.query(Course).filter(
+            Course.institution_external_id == institution_id,
+            Course.code == course_code,
+        ).first()
+        if course and not course.is_demo:
+            raise HTTPException(409, f"{course_code} is an official ERP course and cannot be overwritten by demo data")
+        if course is None:
+            course = Course(
+                institution_external_id=institution_id,
+                ekeekrta_id=0,
+                code=course_code,
+                name=item.subject,
+                department="DEMO",
+                course_type="demo",
+                program="Demo Programme",
+                batch="Demo Batch",
+                semester_number=1,
+                section="DEMO",
+                enrollment_mode="demo",
+                is_demo=True,
+            )
+            db.add(course)
+        course.name = item.subject
+        course.is_demo = True
+
+        present_count = 0
+        for mark in item.attendance:
+            started_at = datetime.combine(mark.date, time(hour=9), tzinfo=timezone.utc)
+            ended_at = started_at + timedelta(minutes=60)
+            attendance = db.query(AttendanceRecord).filter(
+                AttendanceRecord.institution_external_id == institution_id,
+                AttendanceRecord.student_institutional_id == item.student_id,
+                AttendanceRecord.course_code == course_code,
+                AttendanceRecord.session_started_at == started_at,
+                AttendanceRecord.source == "demo",
+            ).first()
+            if attendance is None:
+                attendance = AttendanceRecord(
+                    institution_external_id=institution_id,
+                    ekeekrta_id=next_attendance_id,
+                    student_institutional_id=item.student_id,
+                    course_code=course_code,
+                    class_session_id=next_attendance_id,
+                    source="demo",
+                )
+                next_attendance_id -= 1
+                db.add(attendance)
+            is_present = mark.status == "P"
+            present_count += int(is_present)
+            attendance.student_name = item.student_name
+            attendance.course_name = item.subject
+            attendance.present = is_present
+            attendance.duration_minutes = 60.0 if is_present else 0.0
+            attendance.session_started_at = started_at
+            attendance.session_ended_at = ended_at
+
+        calculated = round((present_count / len(item.attendance)) * 100, 2)
+        imported_rows.append({
+            "student_id": item.student_id,
+            "subject": item.subject,
+            "records": len(item.attendance),
+            "calculated_attendance_percentage": calculated,
+            "supplied_attendance_percentage": item.attendance_percentage,
+            "supplied_percentage_ignored": item.attendance_percentage is not None,
+        })
+
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "Demo data conflicts with an existing ERP record") from None
+    return {
+        "status": "imported",
+        "demo": True,
+        "whatsapp_notifications_created": 0,
+        "rows": imported_rows,
+    }
+
+
+@app.delete("/api/demo-attendance", dependencies=[Depends(require_token)])
+def delete_demo_attendance(db: Session = Depends(get_db)):
+    """Remove only records created by the demo attendance importer."""
+    institution_id = settings.erp_institution_id.strip() or None
+    attendance = db.query(AttendanceRecord).filter(
+        AttendanceRecord.institution_external_id == institution_id,
+        AttendanceRecord.source == "demo",
+    ).delete(synchronize_session=False)
+    courses = db.query(Course).filter(
+        Course.institution_external_id == institution_id,
+        Course.is_demo.is_(True),
+    ).delete(synchronize_session=False)
+    students = db.query(Student).filter(
+        Student.institution_external_id == institution_id,
+        Student.is_demo.is_(True),
+    ).delete(synchronize_session=False)
+    db.commit()
+    return {"status": "removed", "attendance": attendance, "courses": courses, "students": students}
+
+
 def _upsert_erp_user(payload: ERPUserCreate, db: Session):
     institution_id = settings.erp_institution_id.strip() or None
     row = db.query(Student).filter(
         Student.institution_external_id == institution_id,
         Student.institutional_id == payload.institutional_id,
     ).first()
+    if row and row.is_demo:
+        raise HTTPException(409, "This ID belongs to demo data. Remove demo data before creating an official user")
     email_owner = db.query(Student).filter(Student.email == str(payload.email).lower()).first()
     if email_owner and (row is None or email_owner.id != row.id):
         raise HTTPException(409, "Email is already assigned to another ERP user")
@@ -262,17 +417,20 @@ def offline_attendance_roster(course_code: str, db: Session = Depends(get_db)):
     course = db.query(Course).filter(
         Course.institution_external_id == institution_id,
         Course.code == course_code,
+        Course.is_demo.is_(False),
     ).first()
     if not course:
         raise HTTPException(404, "Course not found in this ERP")
     students = db.query(Student).filter(
         Student.institution_external_id == institution_id,
         Student.role == "student",
+        Student.is_demo.is_(False),
     ).order_by(Student.institutional_id.asc()).all()
     roster = [student for student in students if _course_matches_student(course, student)]
     faculty = db.query(Student).filter(
         Student.institution_external_id == institution_id,
         Student.role == "faculty",
+        Student.is_demo.is_(False),
     ).order_by(Student.name.asc()).all()
     return {
         "course": {"code": course.code, "name": course.name,
@@ -290,6 +448,7 @@ def offline_attendance_courses(db: Session = Depends(get_db)):
     institution_id = settings.erp_institution_id.strip() or None
     rows = db.query(Course).filter(
         Course.institution_external_id == institution_id,
+        Course.is_demo.is_(False),
     ).order_by(Course.code.asc()).limit(5001).all()
     if len(rows) > 5000:
         raise HTTPException(422, "Offline attendance course directory exceeds 5,000 courses")
@@ -313,6 +472,7 @@ def submit_offline_attendance(payload: OfflineAttendanceCreate, db: Session = De
     course = db.query(Course).filter(
         Course.institution_external_id == institution_id,
         Course.code == payload.course_code,
+        Course.is_demo.is_(False),
     ).first()
     if not course:
         raise HTTPException(404, "Course not found in this ERP")
@@ -320,6 +480,7 @@ def submit_offline_attendance(payload: OfflineAttendanceCreate, db: Session = De
         Student.institution_external_id == institution_id,
         Student.institutional_id == payload.faculty_institutional_id,
         Student.role == "faculty",
+        Student.is_demo.is_(False),
     ).first()
     if not faculty:
         raise HTTPException(404, "Faculty member not found in this ERP")
@@ -330,6 +491,7 @@ def submit_offline_attendance(payload: OfflineAttendanceCreate, db: Session = De
     students = db.query(Student).filter(
         Student.institution_external_id == institution_id,
         Student.role == "student",
+        Student.is_demo.is_(False),
     ).order_by(Student.institutional_id.asc()).all()
     roster = [student for student in students if _course_matches_student(course, student)]
     roster_by_id = {row.institutional_id.casefold(): row for row in roster}
@@ -440,6 +602,8 @@ def sync_student(payload: StudentSyncIn, idempotency_key: str = Depends(require_
                       ekeekrta_id=payload.student.ekeekrta_id, name=payload.student.name,
                       email=str(payload.student.email), role="student")
         db.add(row)
+    elif row.is_demo:
+        raise HTTPException(409, "Remove the demo student with this ID before synchronizing an official student")
     elif row.role != "student":
         raise HTTPException(409, "The ERP identity is not a student")
     for field in ("ekeekrta_id", "institutional_id", "name", "department", "program", "batch", "semester_number", "section"):
@@ -462,6 +626,8 @@ def sync_course(payload: CourseSyncIn, idempotency_key: str = Depends(require_id
         row = Course(institution_external_id=institution_id, code=payload.course.code,
                      ekeekrta_id=payload.course.ekeekrta_id, name=payload.course.name)
         db.add(row)
+    elif row.is_demo:
+        raise HTTPException(409, "Remove the demo course with this code before synchronizing an official course")
     for field in ("ekeekrta_id", "code", "name", "department", "course_type", "program", "batch",
                   "semester_number", "section", "enrollment_mode", "credits"):
         setattr(row, field, getattr(payload.course, field))
@@ -552,6 +718,7 @@ def retry_whatsapp_notification(notification_id: int, db: Session = Depends(get_
 def dashboard_data(db: Session = Depends(get_db)):
     limit = settings.recent_record_limit
     users = db.query(Student)
+    official_users = users.filter(Student.is_demo.is_(False))
     def dashboard_user(row: Student) -> dict:
         return {
             "id": row.id,
@@ -568,16 +735,23 @@ def dashboard_data(db: Session = Depends(get_db)):
             "parent_name": row.parent_name,
             "parent_phone_last4": row.parent_phone[-4:] if row.parent_phone else None,
             "parent_whatsapp_opt_in": row.parent_whatsapp_opt_in,
+            "is_demo": row.is_demo,
             "synced_at": row.synced_at,
         }
 
     return {
         "name": settings.erp_name,
         "institution_id": settings.erp_institution_id or None,
-        "counts": {"users": users.count(), "students": users.filter(Student.role == "student").count(),
-                   "faculty": users.filter(Student.role == "faculty").count(),
-                   "hod": users.filter(Student.role == "hod").count(), "courses": db.query(Course).count(),
-                   "attendance": db.query(AttendanceRecord).count(), "results": db.query(AcademicResult).count(),
+        "counts": {"users": official_users.count(),
+                   "students": official_users.filter(Student.role == "student").count(),
+                   "faculty": official_users.filter(Student.role == "faculty").count(),
+                   "hod": official_users.filter(Student.role == "hod").count(),
+                   "courses": db.query(Course).filter(Course.is_demo.is_(False)).count(),
+                   "attendance": db.query(AttendanceRecord).filter(AttendanceRecord.source != "demo").count(),
+                   "demo_students": users.filter(Student.is_demo.is_(True)).count(),
+                   "demo_courses": db.query(Course).filter(Course.is_demo.is_(True)).count(),
+                   "demo_attendance": db.query(AttendanceRecord).filter(AttendanceRecord.source == "demo").count(),
+                   "results": db.query(AcademicResult).count(),
                    "offline_classes": db.query(OfflineClassSession).count(),
                    "whatsapp_alerts": db.query(WhatsAppNotification).count()},
         "users": [dashboard_user(row) for row in users.order_by(Student.synced_at.desc()).limit(limit).all()],
