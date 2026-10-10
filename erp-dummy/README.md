@@ -67,8 +67,10 @@ separate screen for synchronized course metadata.
 
 ### Labelled demo attendance matrix
 
-For presentations, open **Demo Attendance Import** and paste CSV or tab-separated
-data with this shape:
+For presentations, open **Demo Attendance Import** and paste CSV, tab-separated
+data, or a Markdown table copied from chat. Every format must include a header
+row beginning with `student_id`; student rows alone do not contain enough date
+information to import attendance safely. CSV has this shape:
 
 ```csv
 student_id,student_name,parent_name,parent_phone,subject,28/09,29/09,30/09,01/10,07/10,09/10,attendance_percentage

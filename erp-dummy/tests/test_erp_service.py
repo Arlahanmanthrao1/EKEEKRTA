@@ -135,6 +135,8 @@ class ERPSandboxTest(unittest.TestCase):
         self.assertIn("'add-user','results'", page.text)
         self.assertIn("DEMO ATTENDANCE IMPORT", page.text)
         self.assertIn("never send WhatsApp messages", page.text)
+        self.assertIn("Markdown table copied from chat", page.text)
+        self.assertIn("header row is missing", page.text)
         self.assertNotIn("Aisha Khan", page.text)
 
     def test_final_absence_sends_one_opted_in_parent_template_message(self):
